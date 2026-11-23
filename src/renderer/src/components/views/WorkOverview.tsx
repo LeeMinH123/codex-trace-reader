@@ -20,7 +20,7 @@ export function WorkOverview({
   onClose(): void
 }) {
   return (
-    <section className="work-overview" aria-labelledby="overview-heading">
+    <section id="work-overview" className="work-overview" aria-labelledby="overview-heading">
       <div className="work-overview-header">
         <div>
           <p className="work-overview-eyebrow">전체에서 세부 근거로</p>
