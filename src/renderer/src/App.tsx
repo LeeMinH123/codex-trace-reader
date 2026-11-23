@@ -3,12 +3,14 @@ import type { Action, DeliveryLink, RecentChatList, RolloutInfo, Workspace } fro
 import { CandidateList, Sources } from './components/layout/Sources'
 import { Timeline, type TimelineViewMode } from './components/views/Timeline'
 import { TimelineToolbar } from './components/views/TimelineToolbar'
+import { WorkOverview } from './components/views/WorkOverview'
 import { Inspector } from './components/Inspector'
 import { RecentChats } from './components/layout/RecentChats'
 import { TraceSearch, TraceSetup } from './components/layout/TraceSetup'
 import { TurnLinks } from './components/common/TurnLinks'
 import { stamp } from './components/common/time'
 import { visibleReadingOrder } from './model/reading-groups'
+import { buildWorkOverview } from './model/work-overview'
 import { searchTimeline, visibleTimelineTurns, type TimelineSearchResult } from './model/timeline-search'
 import { indexDestinations, rolloutLabel } from './model/turn-destinations'
 
@@ -47,6 +49,7 @@ export function App() {
   const [matchesOnly, setMatchesOnly] = useState(false)
   const [activeMatchIndex, setActiveMatchIndex] = useState(-1)
   const [viewMode, setViewMode] = useState<TimelineViewMode>('story')
+  const [overviewOpenBySource, setOverviewOpenBySource] = useState<Record<string, boolean>>({})
   const [busy, setBusy] = useState('')
   const busyRef = useRef(false)
   const [problem, setProblem] = useState('')
@@ -78,6 +81,7 @@ export function App() {
   const data = mode === 'session' ? session?.timeline : mode === 'trace' ? workspace?.trace ?? undefined : undefined
   const key = sourceKey(mode, mode === 'session' ? session?.rolloutId : mode === 'trace' ? bundle?.id : undefined)
   const { selected, selectedTurnId, expandedGroups } = reading[key] ?? emptyReading
+  const overviewOpen = overviewOpenBySource[key] ?? true
 
   const index = useMemo(() => {
     const actions = new Map<string, Action>()
@@ -101,6 +105,11 @@ export function App() {
     }
     return { actions, groups }
   }, [data, raw])
+
+  const overview = useMemo(
+    () => (data ? buildWorkOverview(data.turns, index.actions) : null),
+    [data, index.actions],
+  )
 
   const searchResult = useMemo(
     () => (data ? searchTimeline(data.turns, timelineQuery, raw) : emptySearch),
@@ -214,7 +223,24 @@ export function App() {
     setReading((all) => ({ ...all, [key]: update(all[key] ?? emptyReading) }))
   }
 
+  function setOverviewVisible(open: boolean) {
+    setOverviewOpenBySource((all) => ({ ...all, [key]: open }))
+    if (scroller.current) scroller.current.scrollTop = 0
+  }
+
+  function focusOverviewTurn(id: string) {
+    setInspectContext(emptyInspectContext)
+    updateReading((prior) => ({ ...prior, selectedTurnId: id, selected: null }))
+  }
+
+  function openOverviewStage(id: string, view: 'story' | 'raw') {
+    setOverviewVisible(false)
+    setViewMode(view)
+    selectAction(id, { navigate: true, keepReading: true })
+  }
+
   function switchViewMode(next: TimelineViewMode) {
+    if (!overviewOpen && selected && index.actions.has(selected)) jump.current = selected
     if (raw && next !== 'raw' && selectedAction && !selectedAction.reading
       && selectedAction.kind !== 'model' && selectedAction.kind !== 'instruction') {
       closeInspector()
@@ -223,6 +249,7 @@ export function App() {
   }
 
   function selectTurn(id: string) {
+    setOverviewVisible(false)
     updateReading((prior) => ({ ...prior, selectedTurnId: id }))
     if (scroller.current) scroller.current.scrollTop = 0
   }
@@ -375,6 +402,7 @@ export function App() {
       setCandidates(null)
       if (session?.id !== result.session.id) {
         setReading({})
+        setOverviewOpenBySource({})
         setViewMode('story')
         setSearchOpen(false)
         setInspectContext(emptyInspectContext)
@@ -559,6 +587,10 @@ export function App() {
               >
                 검색
               </button>
+              <button type="button" className="button secondary" aria-controls="work-overview"
+                aria-expanded={overviewOpen} onClick={() => setOverviewVisible(!overviewOpen)}>
+                {overviewOpen ? '개요 접기' : '전체 작업'}
+              </button>
               <div className="header-view-switch" role="group" aria-label="보기 방식">
                 {viewLabels.map((item) => (
                   <button
@@ -626,7 +658,7 @@ export function App() {
               onQuery={setRecentQuery} onOpen={openRecentChat} onOpenFile={openSession}/>}
             {mode !== 'recent' && session && (
               <>
-                {mode === 'session' && data?.note && <p className="timeline-note session-note">{data.note}</p>}
+                {mode === 'session' && data?.note && !overviewOpen && <p className="timeline-note session-note">{data.note}</p>}
                 {mode === 'session' && workspace.bundles.length === 0 && (
                   <TraceSearch result={workspace.traceSearch} busy={Boolean(busy)}
                     onFind={findBundles} onRoot={chooseTraceRoot} onOpen={openBundle}/>
@@ -653,6 +685,18 @@ export function App() {
                       clearTimelineSearch()
                       setSearchOpen(false)
                     }}
+                  />
+                )}
+                {data && overview && overviewOpen && (
+                  <WorkOverview
+                    overview={overview}
+                    selectedTurnId={activeTurn?.id}
+                    source={mode === 'trace' ? 'trace' : 'session'}
+                    recordStatus={data.status}
+                    note={data.note}
+                    onFocusTurn={focusOverviewTurn}
+                    onOpenStage={openOverviewStage}
+                    onClose={() => setOverviewVisible(false)}
                   />
                 )}
                 {data && (
