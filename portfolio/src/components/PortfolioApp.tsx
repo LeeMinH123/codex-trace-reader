@@ -28,10 +28,10 @@ export function PortfolioApp() {
             <span>{nickname}</span>
           </a>
           <nav className="pf-links" aria-label="페이지 탐색">
-            <a href="#philosophy">제품 철학</a>
-            <a href="#project">v0.1.0</a>
-            <a href="#demo">라이브 데모</a>
-            <a href="#roadmap">앞으로의 방향</a>
+            <a href="#philosophy">철학</a>
+            <a href="#project">프로젝트</a>
+            <a href="#demo">데모</a>
+            <a href="#roadmap">확장 방향</a>
             <a href={githubUrl} target="_blank" rel="noreferrer" className="pf-nav-ext">
               GitHub ↗
             </a>
@@ -42,11 +42,11 @@ export function PortfolioApp() {
       <main id="top">
         <section className="pf-hero">
           <div className="pf-container-narrow pf-hero-inner">
-            <p className="pf-eyebrow">공학작문과 발표 · 포트폴리오</p>
+            <p className="pf-eyebrow">{nickname} · Portfolio</p>
             <h1>{tagline}</h1>
             <p className="pf-lead">{intro}</p>
 
-            <div className="pf-interest-pills" aria-label="현재 관심 분야">
+            <div className="pf-interest-pills" aria-label="핵심 관심 영역">
               {interests.map((item) => (
                 <span key={item.title} className="pf-interest-pill" title={item.description}>
                   <small>{item.basis}</small>
@@ -57,13 +57,13 @@ export function PortfolioApp() {
 
             <div className="pf-hero-actions">
               <a href="#philosophy" className="button primary pf-cta-link">
-                제품 철학 먼저 읽기
+                설계 철학 보기
               </a>
               <a href="#demo" className="button secondary pf-cta-link">
-                v0.1.0 라이브 데모 체험
+                라이브 데모 체험
               </a>
-              <a href={repoUrl} target="_blank" rel="noreferrer" className="quiet pf-cta-link">
-                GitHub ({nickname}) ↗
+              <a href={githubUrl} target="_blank" rel="noreferrer" className="quiet pf-cta-link">
+                GitHub ↗
               </a>
             </div>
           </div>
@@ -72,10 +72,10 @@ export function PortfolioApp() {
         <section id="philosophy" className="pf-section pf-section-tinted">
           <div className="pf-container-narrow pf-stack-lg">
             <div className="pf-section-head">
-              <p className="pf-eyebrow">Product Philosophy · 왜 만드는가</p>
-              <h2>관찰이 곧 더 나은 위임으로 이어진다</h2>
+              <p className="pf-eyebrow">Design Philosophy</p>
+              <h2>관찰이 곧 더 나은 판단과 위임으로 이어진다</h2>
               <p className="pf-sublead">
-                제품이 아직 초기 프로토타입인 만큼, 어떤 기능을 넣었는지보다 왜 이 문제가 중요하다고 보는지 먼저 적었습니다.
+                도구와 분야가 달라져도, 복잡한 실행을 사람이 이해하고 검증할 수 있게 만드는 기준은 같습니다.
               </p>
             </div>
 
@@ -106,7 +106,7 @@ export function PortfolioApp() {
               <div className="pf-subhead-row">
                 <h3>6가지 설계 원칙</h3>
                 <a href={philosophyDocUrl} target="_blank" rel="noreferrer" className="pf-inline-link">
-                  철학 전문 보기 (docs/product-philosophy.md) ↗
+                  원문 에세이 보기 (docs/product-philosophy.md) ↗
                 </a>
               </div>
               <dl className="pf-principles-list">
@@ -124,6 +124,7 @@ export function PortfolioApp() {
         <section id="project" className="pf-section">
           <div className="pf-container-narrow pf-stack-lg">
             <div className="pf-section-head">
+              <p className="pf-eyebrow">Featured Work · Case 01</p>
               <div className="pf-head-badges">
                 <span className="pf-version-badge">{project.period}</span>
               </div>
@@ -151,7 +152,7 @@ export function PortfolioApp() {
                 </dd>
               </div>
               <div className="pf-spec-row">
-                <dt>현재 결과</dt>
+                <dt>결과</dt>
                 <dd>
                   <ul className="pf-outcomes">
                     {project.outcomes.map((outcome) => (
@@ -163,7 +164,7 @@ export function PortfolioApp() {
             </dl>
 
             <div className="pf-subsection">
-              <h3>v0.1.0에서 먼저 바꾼 것</h3>
+              <h3>핵심 개선</h3>
               <div className="pf-diff-list">
                 {project.metrics.map((metric) => (
                   <div key={metric.label} className="pf-diff-row">
@@ -175,7 +176,7 @@ export function PortfolioApp() {
                 ))}
               </div>
               <div className="pf-project-links">
-                <a href="#demo" className="pf-inline-link">아래 라이브 데모로 확인 ↓</a>
+                <a href="#demo" className="pf-inline-link">라이브 데모 보기 ↓</a>
                 <a href={repoUrl} target="_blank" rel="noreferrer" className="pf-inline-link">
                   소스 코드 (GitHub) ↗
                 </a>
@@ -190,10 +191,10 @@ export function PortfolioApp() {
         <section id="demo" className="pf-section pf-section-tinted">
           <div className="pf-container">
             <div className="pf-container-narrow pf-demo-intro">
-              <p className="pf-eyebrow">Interactive Prototype · v0.1.0</p>
-              <h2>현재 버전 직접 둘러보기</h2>
+              <p className="pf-eyebrow">Interactive Demo · Case 01</p>
+              <h2>트레이스 뷰어 체험하기</h2>
               <p className="pf-sublead">
-                샘플 기록으로 <strong>이야기 · 흐름도 · 타임라인 · 원본</strong> 전환과 <code>→ 모델</code> 입력 추적을 체험할 수 있습니다.
+                샘플 기록으로 <strong>이야기 · 흐름도 · 타임라인 · 원본</strong> 전환과 <code>→ 모델</code> 입력 추적을 확인할 수 있습니다.
               </p>
             </div>
 
@@ -204,10 +205,10 @@ export function PortfolioApp() {
         <section id="roadmap" className="pf-section">
           <div className="pf-container-narrow pf-stack-lg">
             <div className="pf-section-head">
-              <p className="pf-eyebrow">Direction & Roadmap · 앞으로의 방향</p>
-              <h2>초기 버전을 넘어 다음 단계로</h2>
+              <p className="pf-eyebrow">Evolution & Direction</p>
+              <h2>다음 단계와 확장 방향</h2>
               <p className="pf-sublead">
-                v0.1.0은 기록을 읽기 전용으로 구조화하는 뼈대입니다. 다음 과제는 더 깊이 숨기고, 모듈화하고, 시각적으로 직관화하는 일입니다.
+                지금의 구조를 다듬어 더 간결한 계층과 범용 어댑터로 발전시키고, 다른 실행 도메인으로 확장할 계획입니다.
               </p>
             </div>
 
@@ -229,7 +230,7 @@ export function PortfolioApp() {
       <footer className="pf-footer">
         <div className="pf-container-narrow pf-footer-inner">
           <div>
-            <strong>{nickname}</strong> · Codex Trace Reader Portfolio
+            <strong>{nickname}</strong>
           </div>
           <div className="pf-footer-links">
             <a href={githubUrl} target="_blank" rel="noreferrer">GitHub</a>
