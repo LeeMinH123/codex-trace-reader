@@ -16,7 +16,7 @@ AI 에이전트가 남긴 방대한 실행 기록(`rollout-*.jsonl`, `trace-*`)�
 | **문서 목표** | `codex-trace-reader`의 설계 배경, 설치 방법, 단계별 사용 흐름, 웹 데모 빌드·배포 및 문제 해결 절차를 안내합니다. |
 | **예상 독자** | Codex 실행 기록을 점검·관찰하려는 개발자 및 AI 에이전트에게 작업을 위임하는 사용자 |
 | **사전 배경 지식** | Codex 데스크톱/CLI의 기본 사용 경험이 있으면 충분하며, 내부 트레이스 스키마를 미리 알 필요는 없습니다. |
-| **관련 설계 문서** | [제품 철학 (`product-philosophy.md`)](product-philosophy.md) · [제품 요구사항 (`prd.md`)](prd.md) |
+| **관련 설계 문서** | [제품 철학 (`docs/product-philosophy.md`)](docs/product-philosophy.md) · [제품 요구사항 (`docs/prd.md`)](docs/prd.md) |
 | **문서 변경 이력** | `v0.1.0` (2026-11-23) — 초판 작성, 4종 읽기 뷰어 및 정적 웹 데모 배포 가이드 반영 |
 | **문의 및 저작권** | [GitHub Issues](https://github.com/LeeMinH123/codex-trace-reader/issues) · Copyright © 2026 LeeMinH123 |
 
@@ -134,28 +134,51 @@ npm run build:portfolio
 
 ```text
 ├── .github/workflows/
-│   └── deploy-pages.yml     GitHub Pages 정적 빌드·배포 워크플로우
-├── portfolio/               정적 웹 포트폴리오 및 브라우저 라이브 데모
+│   └── deploy-pages.yml         GitHub Pages 정적 빌드·배포 워크플로우
+├── docs/
+│   ├── product-philosophy.md    제품 철학 문서
+│   └── prd.md                   제품 요구사항 문서 (PRD)
+├── portfolio/                   정적 웹 포트폴리오 및 브라우저 라이브 데모
 │   ├── index.html
-│   └── src/                 프로필, 샘플 시나리오 데이터, DemoWorkbench
+│   └── src/
+│       ├── main.tsx             포트폴리오 엔트리
+│       ├── components/          PortfolioApp, DemoWorkbench
+│       ├── data/                프로필(profile) 및 데모 스냅샷(demo-data)
+│       └── styles/              포트폴리오 전용 CSS
 ├── src/
 │   ├── main/
-│   │   ├── index.ts         Electron 창, 파일 선택 다이얼로그, IPC 검증
-│   │   ├── sources/         로컬 세션·번들 탐색, reducer 실행(읽기 전용)
-│   │   └── records/         rollout·트레이스 파서, 의미 요약, 타임라인 구성
-│   ├── preload/             Renderer에 노출하는 최소 읽기 전용 IPC 브리지
+│   │   ├── index.ts             Electron 창, 파일 선택 다이얼로그, IPC 검증
+│   │   ├── sources/
+│   │   │   ├── workspace.ts     작업공간 상태 및 소스 조합
+│   │   │   ├── files.ts         읽기 전용 파일 입출력 유틸리티
+│   │   │   ├── session/         최근 채팅 및 rollout 파일 탐색
+│   │   │   └── trace/           상세 번들 발견, reducer 실행, 턴 매핑
+│   │   └── records/
+│   │       ├── core/            공통 JSON·타임라인 헬퍼
+│   │       ├── parsing/         rollout·세션·트레이스 파서 및 근거 추출
+│   │       └── reading/         지침 분류·코드 실행·대화 미리보기 요약
+│   ├── preload/                 Renderer에 노출하는 최소 읽기 전용 IPC 브리지
 │   ├── renderer/
-│   │   └── src/             React 기반 4종 뷰어 및 Input·Work·Output 상세 패널
-│   └── shared/              Main · Renderer · Portfolio 공유 타입 계약
-├── tests/                   파서, 탐색, 의미 요약, 시각화, 데모 회귀 테스트
-├── vite.portfolio.config.ts 정적 포트폴리오 전용 Vite 설정
-├── product-philosophy.md    제품 철학 문서
-└── prd.md                   제품 요구사항 문서 (PRD)
+│   │   └── src/
+│   │       ├── App.tsx          루트 화면 상태 및 탐색 조율
+│   │       ├── model/           챕터, IWO, 그래프, 타임라인, 검색 모델
+│   │       ├── components/
+│   │       │   ├── common/      시간 포맷 및 턴 링크
+│   │       │   ├── layout/      최근 채팅, 좌측 목차, 트레이스 안내
+│   │       │   ├── views/       이야기·흐름도·타임라인 뷰 및 검색 툴바
+│   │       │   └── Inspector.tsx  Input·Work·Output 상세 패널
+│   │       └── styles/          공통 테마 및 읽기 흐름 CSS
+│   └── shared/                  Main · Renderer · Portfolio 공유 타입 계약
+├── tests/
+│   ├── records/                 세션·트레이스 파서 및 의미 요약 회귀 테스트
+│   ├── views/                   IWO·챕터·탐색·시각화 모델 테스트
+│   └── portfolio/               웹 데모 데이터 및 뷰어 변환 무결성 테스트
+└── vite.portfolio.config.ts     정적 포트폴리오 전용 Vite 설정
 ```
 
 ### 참고 자료
-- [제품 철학 (`product-philosophy.md`)](product-philosophy.md)
-- [제품 요구사항 (`prd.md`)](prd.md)
+- [제품 철학 (`docs/product-philosophy.md`)](docs/product-philosophy.md)
+- [제품 요구사항 (`docs/prd.md`)](docs/prd.md)
 - [OpenAI Codex Rollout Trace 구조](https://github.com/openai/codex/blob/main/codex-rs/rollout-trace/README.md)
 
 ---

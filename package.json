@@ -10,7 +10,7 @@
     "build": "npm run typecheck && electron-vite build",
     "build:portfolio": "npm run typecheck && vite build --config vite.portfolio.config.ts",
     "start": "electron-vite preview",
-    "test": "tsc -p tsconfig.test.json && node --test out/tests/tests/*.test.js"
+    "test": "node -e \"require('node:fs').rmSync('out/tests', { recursive: true, force: true })\" && tsc -p tsconfig.test.json && node --test \"out/tests/tests/**/*.test.js\""
   },
   "engines": {
     "node": ">=22.12.0"

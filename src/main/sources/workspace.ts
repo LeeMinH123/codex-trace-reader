@@ -1,14 +1,14 @@
 import { dirname } from 'node:path'
 import type { BundleInfo, ReaderApi, RolloutInfo, SourceIssue, Workspace } from '../../shared/reader'
-import { compareId } from '../records/json'
-import type { Snapshot } from '../records/timeline'
-import { bundleInfo, readManifest } from './bundle'
+import { compareId } from '../records/core/json'
+import type { Snapshot } from '../records/core/timeline'
+import { bundleInfo, readManifest } from './trace/bundle'
 import { canonicalPath, failureMessage, fixedPath, pathKey } from './files'
-import { recordingExecutable, reduceBundle, type RecordingExecutable } from './reducer'
-import { defaultCodexHome, RecentChats } from './recent-chats'
-import { RolloutSources } from './rollouts'
-import { readTraceTurnIds } from './trace-turns'
-import { findDesktopExecutable, findTraceBundles } from './trace-discovery'
+import { recordingExecutable, reduceBundle, type RecordingExecutable } from './trace/reducer'
+import { defaultCodexHome, RecentChats } from './session/recent-chats'
+import { RolloutSources } from './session/rollouts'
+import { readTraceTurnIds } from './trace/trace-turns'
+import { findDesktopExecutable, findTraceBundles } from './trace/trace-discovery'
 
 function bundleOrder(a: BundleInfo, b: BundleInfo) {
   return b.startedAt - a.startedAt || compareId(a.id, b.id)

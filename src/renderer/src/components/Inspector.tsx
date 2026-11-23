@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Action, ActionDetail, DeliveryLink, DetailSection, ModelInputItem } from '../../../shared/reader'
-import { ActionMeta } from './Timeline'
-import { stamp } from './time'
+import { ActionMeta } from './views/Timeline'
+import { stamp } from './common/time'
 
 const excludedTitles = new Set(['묶음 규칙', '표시 근거'])
 

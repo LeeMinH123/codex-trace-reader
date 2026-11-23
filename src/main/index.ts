@@ -2,8 +2,8 @@ import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'el
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { ReaderWorkspace } from './sources/workspace'
-import { defaultCodexHome } from './sources/recent-chats'
-import { defaultTraceRoots } from './sources/trace-discovery'
+import { defaultCodexHome } from './sources/session/recent-chats'
+import { defaultTraceRoots } from './sources/trace/trace-discovery'
 
 const reader = new ReaderWorkspace(defaultCodexHome(), defaultTraceRoots())
 const renderer = join(__dirname, '../renderer/index.html')

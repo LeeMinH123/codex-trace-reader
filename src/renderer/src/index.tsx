@@ -1,5 +1,5 @@
 import { createRoot } from 'react-dom/client'
-import { App } from './app/App'
+import { App } from './App'
 import type { ReaderApi } from '../../shared/reader'
 import './styles/theme.css'
 
