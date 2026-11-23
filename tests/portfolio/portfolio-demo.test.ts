@@ -11,7 +11,10 @@ import { buildTurnTimeline } from '../../src/renderer/src/model/turn-timeline'
 test('포트폴리오 프로필과 데모 시나리오 데이터는 모든 참조가 무결하고 4종 뷰어로 변환된다', () => {
   assert.equal(PORTFOLIO_PROFILE.nickname, 'LeeMinH123')
   assert.ok(PORTFOLIO_PROFILE.interests.length >= 3)
-  assert.ok(PORTFOLIO_PROFILE.principles.length === 6)
+  assert.equal(PORTFOLIO_PROFILE.philosophyPillars.length, 3)
+  assert.equal(PORTFOLIO_PROFILE.flowSteps.length, 3)
+  assert.equal(PORTFOLIO_PROFILE.principles.length, 6)
+  assert.equal(PORTFOLIO_PROFILE.roadmap.length, 4)
   assert.ok(DEMO_SCENARIOS.length >= 2)
 
   for (const scenario of DEMO_SCENARIOS) {
