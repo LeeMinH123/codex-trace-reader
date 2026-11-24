@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import type { Action, ActionDetail, ActionKind, ModelInputItem, ModelRequestDetail, Relation, Turn } from '../../../shared/reader'
+import type { EvidenceRef, ExecutionEdge, SourceCoverage } from '../../../shared/execution-graph'
+import { buildExecutionGraph, type EventRecord } from '../core/execution-graph'
 import { describeInstructionMessage, plainPreview, readableMessage, selectInstructionIds, userRequest } from '../reading/reading'
 import { describeCodeExecution, readableTool, structuredInput, toolOutcome } from '../reading/tool-reading'
 import { entries, fields, isFields, messageText, number, pointer, preview, string, strings, type Fields } from '../core/json'
 import {
-  anchorId, directPayloadValues, payloadEvidence, rawIndex, rawReferenceLabel,
+  anchorId, directPayloadValues, payloadEvidence, payloadReferences, rawIndex, rawReferenceLabel,
   rawSequence, sequences, stateEvidence,
 } from './trace-evidence'
 import { chronologically, executionStatus, messageLabel, position, section, snapshot } from '../core/timeline'
@@ -42,6 +44,11 @@ interface Node {
   action: Action
   turnId?: string
   threadId?: string
+}
+
+interface TraceRelation extends Relation {
+  kind: ExecutionEdge['kind']
+  itemIds?: string[]
 }
 
 function stableId(collection: Collection, key: string, value: Fields): string {
@@ -106,7 +113,7 @@ export function parseTrace(bundle: string, state: Fields, events: ReturnType<typ
   const turns = new Map<string, Turn>()
   const nodes = new Map<string, Node>()
   const byKey = new Map<string, Node>()
-  const links = new Map<string, Relation[]>()
+  const links = new Map<string, TraceRelation[]>()
   const threadMap = new Map(entries(state.threads))
   const turnMap = new Map(entries(state.codex_turns))
   const tools = new Map(entries(state.tool_calls))
@@ -229,10 +236,13 @@ export function parseTrace(bundle: string, state: Fields, events: ReturnType<typ
     return typeof key === 'string' ? byKey.get(`${collection}:${key}`) : undefined
   }
 
-  function link(from: Node, to: Node | undefined, label: string, rule: string) {
+  function link(
+    from: Node, to: Node | undefined, label: string, rule: string,
+    kind: ExecutionEdge['kind'] = 'reference', itemIds?: string[],
+  ) {
     if (!to || to === from) return
     const relations = links.get(from.action.id) ?? []
-    relations.push({ target: to.action.id, label, rule })
+    relations.push({ target: to.action.id, label, rule, kind, itemIds })
     links.set(from.action.id, relations)
   }
 
@@ -266,8 +276,8 @@ export function parseTrace(bundle: string, state: Fields, events: ReturnType<typ
 
   for (const node of nodes.values()) {
     const { collection, value, threadId, action } = node
-    const target = (collection: string, key: unknown, label: string, rule: string) =>
-      link(node, lookup(collection, key), label, rule)
+    const target = (collection: string, key: unknown, label: string, rule: string, kind?: ExecutionEdge['kind']) =>
+      link(node, lookup(collection, key), label, rule, kind)
 
     if (collection === 'inference_calls') {
       for (const id of strings(value.request_item_ids)) {
@@ -275,11 +285,11 @@ export function parseTrace(bundle: string, state: Fields, events: ReturnType<typ
         const label = item?.turnId && item.turnId === node.turnId ? '요청에 포함된 항목'
           : item?.turnId && turns.has(item.turnId) && chronologically(turns.get(item.turnId)!, node.action) < 0
             ? '요청에 포함된 이전 턴 문맥' : '요청에 포함된 항목 · 턴 관계 미확인'
-        link(node, item, label, 'request_item_ids')
+        link(node, item, label, 'request_item_ids', 'model-input')
       }
-      for (const id of strings(value.response_item_ids)) target('conversation_items', id, '모델 응답 항목', 'response_item_ids')
+      for (const id of strings(value.response_item_ids)) target('conversation_items', id, '모델 응답 항목', 'response_item_ids', 'model-output')
       for (const id of strings(value.tool_call_ids_started_by_response)) {
-        target('tool_calls', id, '응답에서 요청한 도구', 'tool_call_ids_started_by_response')
+        target('tool_calls', id, '응답에서 요청한 도구', 'tool_call_ids_started_by_response', 'model-call')
         const tool = lookup('tool_calls', id)
         if (tool) {
           const list = startedByInference.get(tool.action.id) ?? []
@@ -294,35 +304,28 @@ export function parseTrace(bundle: string, state: Fields, events: ReturnType<typ
       const outputField = isTool ? 'model_visible_output_item_ids' : 'output_item_ids'
       const inputs = isTool ? strings(value[inputField]) : strings([value[inputField]])
       const outputs = strings(value[outputField])
-      for (const id of inputs) target('conversation_items', id, '호출 요청 항목', inputField)
+      for (const id of inputs) target('conversation_items', id, '호출 요청 항목', inputField, 'tool-input')
       const included = new Map<Node, string[]>()
       for (const id of new Set(outputs)) {
-        target('conversation_items', id, '반환 항목', outputField)
+        target('conversation_items', id, '반환 항목', outputField, 'tool-result')
         for (const request of requestsByItem.get(id) ?? []) {
           const ids = included.get(request) ?? []
           ids.push(id)
           included.set(request, ids)
         }
       }
+      const deliveries: NonNullable<Action['deliveries']> = []
       for (const [request, ids] of included) {
-        link(node, request, '반환 항목이 포함된 모델 요청', `${outputField} ∩ request_item_ids · ${ids.join(', ')}`)
+        const itemIds = ids.flatMap((id) => lookup('conversation_items', id)?.action.id ?? [])
+        link(node, request, '반환 항목이 포함된 모델 요청', `${outputField} ∩ request_item_ids · ${ids.join(', ')}`, 'delivery', itemIds)
+        deliveries.push({ targetId: request.action.id, targetLabel: request.action.label, targetTime: request.action.time, itemIds })
       }
-      if (included.size > 0) {
-        action.deliveries = [...included.entries()]
-          .sort(([a], [b]) => chronologically(a.action, b.action))
-          .map(([request, rawIds]) => ({
-            targetId: request.action.id,
-            targetLabel: request.action.label,
-            targetTime: request.action.time,
-            itemIds: rawIds
-              .map((rawId) => lookup('conversation_items', rawId)?.action.id)
-              .filter((id): id is string => Boolean(id)),
-          }))
-      }
+      if (deliveries.length > 0) action.deliveries = deliveries.sort((a, b) =>
+        chronologically(nodes.get(a.targetId)!.action, nodes.get(b.targetId)!.action))
     }
     if (collection === 'tool_calls') {
       target('terminal_operations', value.terminal_operation_id, '터미널 작업', 'terminal_operation_id')
-      target('code_cells', value.started_code_cell_id, '호출이 시작한 코드 실행', 'started_code_cell_id')
+      target('code_cells', value.started_code_cell_id, '호출이 시작한 코드 실행', 'started_code_cell_id', 'containment')
       target('code_cells', fields(value.requester).code_cell_id, '요청한 코드 실행', 'requester.code_cell_id')
       const startedCell = string(value.started_code_cell_id)
       if (startedCell) {
@@ -343,7 +346,7 @@ export function parseTrace(bundle: string, state: Fields, events: ReturnType<typ
     }
     if (collection === 'code_cells') {
       for (const id of strings(value.nested_tool_call_ids)) {
-        target('tool_calls', id, '코드에서 요청한 도구', 'nested_tool_call_ids')
+        target('tool_calls', id, '코드에서 요청한 도구', 'nested_tool_call_ids', 'containment')
         const child = lookup('tool_calls', id)
         if (child) addChildLink(child.action.id, node.key, 'nested_tool_call_ids')
       }
@@ -367,7 +370,7 @@ export function parseTrace(bundle: string, state: Fields, events: ReturnType<typ
         const anchor = anchorId(fields(value[field]))
         const endpoint = anchor && lookup(...anchor)
         if (!endpoint) continue
-        link(node, endpoint, label, field)
+        link(node, endpoint, label, field, 'delegation')
         link(endpoint, node, '연결된 에이전트 전달', field)
         if (field === 'source') {
           turnId = endpoint.turnId
@@ -378,8 +381,8 @@ export function parseTrace(bundle: string, state: Fields, events: ReturnType<typ
     }
     if (collection === 'threads') {
       const origin = fields(value.origin)
-      target('threads', origin.parent_thread_id, '상위 에이전트', 'origin.parent_thread_id')
-      target('interaction_edges', origin.spawn_edge_id, '에이전트 생성 기록', 'origin.spawn_edge_id')
+      target('threads', origin.parent_thread_id, '상위 에이전트', 'origin.parent_thread_id', 'delegation')
+      target('interaction_edges', origin.spawn_edge_id, '에이전트 생성 기록', 'origin.spawn_edge_id', 'delegation')
     }
     const linked = turnId && turns.get(turnId)
     if (linked) {
@@ -510,6 +513,92 @@ export function parseTrace(bundle: string, state: Fields, events: ReturnType<typ
     const ids = selectInstructionIds(instructionActions)
     if (ids.length > 0) turn.instructionIds = ids
   }
+
+  function returnedItems(value: Fields) {
+    return strings(value.model_visible_output_item_ids).flatMap((id) => {
+      const item = conversation.get(id)
+      return item ? [{ id, item }] : []
+    })
+  }
+
+  function evidenceFor(node: Node) {
+    const { collection, key, value } = node
+    const operationId = string(value.terminal_operation_id)
+    const operation = operationId ? operations.get(operationId) : undefined
+    const returned = returnedItems(value)
+    const stateRecords: { collection: string; key: string; value: Fields }[] = [{ collection, key, value }]
+    if (operation && operationId) stateRecords.push({ collection: 'terminal_operations', key: operationId, value: operation })
+    for (const { id, item } of returned) stateRecords.push({ collection: 'conversation_items', key: id, value: item })
+
+    const rawSeq = new Set([
+      ...sequences(fields(value.execution)), ...sequences(fields(operation?.execution)),
+      ...rawSequence(value, 'accepted_seq'), ...rawSequence(value, 'initial_response_seq'), ...rawSequence(value, 'yielded_seq'),
+    ])
+    const rawRecords = [...rawSeq].sort((a, b) => a - b).map((seq) => {
+      const record = raw.get(seq)
+      const ref: EvidenceRef = {
+        sourceId: bundle, kind: 'jsonl', availability: record ? 'present' : 'missing',
+        location: `${join(bundle, 'trace.jsonl')} · ${rawReferenceLabel(seq, record?.line)}`,
+      }
+      return { record, ref }
+    })
+    const recordedBody = fields(value.body).parts
+    const payloads = payloadReferences(bundle, references, [
+      ...directPayloadValues(value), ...directPayloadValues(operation ?? {}),
+      ...(Array.isArray(recordedBody) ? recordedBody.flatMap((part) => directPayloadValues(fields(part))) : []),
+      value.carried_raw_payload_ids,
+    ], shards)
+    return { operation, returned, stateRecords, rawRecords, payloads }
+  }
+
+  const buildGraph = () => {
+    const limitations: SourceCoverage['limitations'] = []
+    if (partial) limitations.push('partial-jsonl')
+    if (state.recording_status === 'unclosed') limitations.push('recording-open')
+    if (state.recording_status === 'closed_with_partial_payloads') limitations.push('partial-payloads')
+    const edges: ExecutionEdge[] = []
+    for (const { action } of nodes.values()) {
+      for (const { target, kind, rule, itemIds } of links.get(action.id) ?? []) {
+        edges.push({
+          kind: kind === 'containment' && turnGroupOf.get(action.id) !== turnGroupOf.get(target) ? 'reference' : kind,
+          from: action.id, to: target, itemIds, provenance: { level: 'id-confirmed', rule },
+        })
+      }
+      if (action.parent) edges.push({
+        kind: 'containment', from: action.parent.id, to: action.id,
+        provenance: { level: 'rule-derived', rule: action.parent.rule },
+      })
+    }
+    return buildExecutionGraph(ordered, { kind: 'trace', sources: [{ id: bundle, path: bundle, limitations }] }, (id): EventRecord => {
+      const node = nodes.get(id)!
+      const { value, collection, action } = node
+      const turn = turnGroupOf.get(id)
+      const recordedTurn = string(value.codex_turn_id) ? 'codex_turn_id' : string(value.started_by_codex_turn_id) ? 'started_by_codex_turn_id' : undefined
+      const turnProvenance: EventRecord['turnProvenance'] = turn && turnMap.has(turn)
+        ? { level: 'id-confirmed', rule: collection === 'interaction_edges' ? 'source의 기록된 연결 ID' : recordedTurn ?? 'tool_call_id → 도구의 턴 ID' }
+        : { level: 'unavailable', rule: '턴 ID 미확인' }
+      const threadId = collection === 'threads' ? node.key : node.threadId ?? string(turnMap.get(turn ?? '')?.thread_id)
+      const { stateRecords, rawRecords, payloads } = evidenceFor(node)
+      const information = collection !== 'conversation_items' ? undefined
+        : action.kind === 'instruction' ? 'instruction' : action.kind === 'message' ? 'message'
+          : value.kind === 'function_call' || value.kind === 'custom_tool_call' ? 'call'
+            : value.kind === 'function_call_output' || value.kind === 'custom_tool_call_output' ? 'result' : 'other'
+      return {
+        sourceId: bundle, turnProvenance, information,
+        actor: value.role === 'user' ? { id: 'agent:user', label: '사용자', role: 'user', provenance: { level: 'recorded' } }
+          : threadId ? { id: `agent:thread:${threadId}`, label: actor(threadId), role: 'agent', provenance: { level: 'id-confirmed', rule: '기록된 스레드 ID' } }
+            : undefined,
+        evidence: [
+          ...stateRecords.map(({ collection, key }): EvidenceRef => ({
+            sourceId: bundle, kind: 'reduced-state', location: `state.json ${pointer(collection, key)}`, availability: 'present',
+          })),
+          ...rawRecords.map(({ ref }) => ref),
+          ...payloads.map(({ ref }) => ref),
+        ],
+      }
+    }, edges)
+  }
+
   return snapshot({
     lastAt, status: traceStatus(state),
     note: [
@@ -520,15 +609,10 @@ export function parseTrace(bundle: string, state: Fields, events: ReturnType<typ
     const node = nodes.get(id)
     if (!node) return null
     const { value, collection, key } = node
-    const operationId = string(value.terminal_operation_id)
-    const operation = operationId ? operations.get(operationId) : undefined
+    const { operation, returned, stateRecords, rawRecords, payloads } = evidenceFor(node)
     const operationResult = fields(operation?.result)
     const summary = fields(value.summary)
     const recordedBody = fields(value.body).parts
-    const returned = strings(value.model_visible_output_item_ids).flatMap((id) => {
-      const item = conversation.get(id)
-      return item ? [{ id, item, text: messageText(fields(item.body).parts) }] : []
-    })
     const detailSections = [
       ...section('기록된 본문', messageText(recordedBody), 'message'),
       ...section('호출 요청 주체', value.requester),
@@ -536,33 +620,21 @@ export function parseTrace(bundle: string, state: Fields, events: ReturnType<typ
       ...section('기록된 입력 미리보기', summary.input_preview ?? summary.message_preview, 'input'),
       ...section('실행 결과', operation?.result ?? value.result, 'result'),
       ...section('기록된 결과 미리보기', summary.output_preview, 'result'),
-      ...section('모델에 표시 가능한 반환 기록', returned.map((item) => item.text).filter(Boolean).join('\n\n'), 'result'),
+      ...section('모델에 표시 가능한 반환 기록', returned.map(({ item }) => messageText(fields(item.body).parts)).filter(Boolean).join('\n\n'), 'result'),
       ...section('종료 코드', operationResult.exit_code ?? fields(value.result).exit_code, 'result'),
       ...section('토큰 사용량', value.usage),
       ...section('메시지 발신·수신', value.agent_message),
       ...section('전달 출발·도착', value.source && value.target ? { source: value.source, target: value.target } : undefined),
       ...section('표시 근거', `${pointer(collection, key)} 객체의 유형과 상태를 한국어로 표시합니다. 턴은 기록된 턴 ID로 연결합니다.`),
     ]
-    const rawSeq = new Set([
-      ...sequences(fields(value.execution)), ...sequences(fields(operation?.execution)),
-      ...rawSequence(value, 'accepted_seq'), ...rawSequence(value, 'initial_response_seq'), ...rawSequence(value, 'yielded_seq'),
-    ])
-    const evidence = [stateEvidence(collection, key, value)]
-    if (operation && operationId) evidence.push(stateEvidence('terminal_operations', operationId, operation))
-    for (const { id, item } of returned) evidence.push(stateEvidence('conversation_items', id, item))
-    for (const seq of [...rawSeq].sort((a, b) => a - b)) {
-      const event = raw.get(seq)
+    const evidence = stateRecords.map(({ collection, key, value }) => stateEvidence(collection, key, value))
+    for (const { ref, record } of rawRecords) {
       evidence.push({
-        type: event ? 'raw' : 'reference',
-        location: `${join(bundle, 'trace.jsonl')} · ${rawReferenceLabel(seq, event?.line)}`,
-        text: event?.text ?? '이 스냅샷에서 원시 레코드를 찾을 수 없습니다.',
+        type: record ? 'raw' : 'reference', location: ref.location,
+        text: record?.text ?? '이 스냅샷에서 원시 레코드를 찾을 수 없습니다.',
       })
     }
-    evidence.push(...payloadEvidence(bundle, references, [
-      ...directPayloadValues(value), ...directPayloadValues(operation ?? {}),
-      ...(Array.isArray(recordedBody) ? recordedBody.flatMap((part) => directPayloadValues(fields(part))) : []),
-      value.carried_raw_payload_ids,
-    ], shards))
+    evidence.push(...payloads.map(payloadEvidence))
     let modelRequest: ModelRequestDetail | undefined
     if (collection === 'inference_calls') {
       const prevSet = previousRequestItems.get(node.action.id)
@@ -637,9 +709,9 @@ export function parseTrace(bundle: string, state: Fields, events: ReturnType<typ
     }
     return {
       sections: detailSections,
-      relations: links.get(id) ?? [],
+      relations: (links.get(id) ?? []).map(({ target, label, rule }) => ({ target, label, rule })),
       evidence,
       ...(modelRequest ? { modelRequest } : {}),
     }
-  })
+  }, buildGraph)
 }

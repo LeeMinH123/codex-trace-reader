@@ -1,5 +1,6 @@
 import { fields, isFields, jsonLines, number, pointer, string, type Fields } from '../core/json'
 import type { Evidence } from '../../../shared/reader'
+import type { EvidenceRef } from '../../../shared/execution-graph'
 import { join } from 'node:path'
 
 export function rawIndex(text: string) {
@@ -22,12 +23,12 @@ export function sequences(value: Fields): number[] {
   })
 }
 
-export function payloadEvidence(
+export function payloadReferences(
   bundle: string,
   references: Fields,
   values: unknown[],
   shards: Set<number>,
-): Evidence[] {
+) {
   const ids = new Set<string>()
   const pending = [...values]
   while (pending.length) {
@@ -42,21 +43,37 @@ export function payloadEvidence(
     const location = shard === null
       ? join(bundle, 'payloads') : join(bundle, 'payloads', `${String(shard).padStart(6, '0')}.zst`)
     const notes = new Set<string>()
+    const issues = new Set<'truncated' | 'omitted'>()
     const parts = [reference]
     while (parts.length) {
       const part = parts.pop()!
       const capture = fields(part.capture)
-      if (capture.status === 'truncated') notes.add(`본문 잘림 · ${capture.retained_bytes ?? '?'} / ${capture.original_bytes ?? '?'} 바이트`)
-      if (capture.status === 'omitted') notes.add(`본문 누락 · 원본 ${capture.original_bytes ?? '?'} 바이트`)
+      if (capture.status === 'truncated') {
+        issues.add(capture.status)
+        notes.add(`본문 잘림 · ${capture.retained_bytes ?? '?'} / ${capture.original_bytes ?? '?'} 바이트`)
+      }
+      if (capture.status === 'omitted') {
+        issues.add(capture.status)
+        notes.add(`본문 누락 · 원본 ${capture.original_bytes ?? '?'} 바이트`)
+      }
       if (Array.isArray(part.parts)) for (const child of part.parts) parts.push(fields(child))
     }
     if (shard !== null) notes.add(shards.has(shard) ? '압축 샤드 위치가 확보됐습니다.' : '스냅샷에서 샤드를 확인할 수 없습니다.')
     else if (!notes.size) notes.add('샤드 위치를 확인할 수 없습니다.')
-    return {
-      type: 'reference', location: `${location} · ${id}`,
-      text: [...notes, `state.json ${pointer('raw_payloads', id)}`, JSON.stringify(reference, null, 2)].join('\n'),
+    const ref: EvidenceRef = {
+      sourceId: bundle, kind: 'payload', location: `${location} · ${id}`,
+      availability: shard === null || !shards.has(shard) ? 'missing' : issues.size ? 'partial' : 'reference-only',
+      ...(issues.size ? { capture: [...issues] } : {}),
     }
+    return { id, reference, notes, ref }
   })
+}
+
+export function payloadEvidence({ id, reference, notes, ref }: ReturnType<typeof payloadReferences>[number]): Evidence {
+  return {
+    type: 'reference', location: ref.location,
+    text: [...notes, `state.json ${pointer('raw_payloads', id)}`, JSON.stringify(reference, null, 2)].join('\n'),
+  }
 }
 
 export function stateEvidence(collection: string, key: string, value: Fields): Evidence {

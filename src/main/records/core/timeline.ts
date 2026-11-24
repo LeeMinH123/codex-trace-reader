@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import type { Action, ActionDetail, ActionKind, DetailSection, Timeline, Turn } from '../../../shared/reader'
+import type { ExecutionGraph } from '../../../shared/execution-graph'
 import { compareId, display, number, string, type Fields } from './json'
 
 export interface Snapshot {
   timeline: Timeline
+  readonly graph: ExecutionGraph
   inspect(actionId: string): ActionDetail | null
 }
 
@@ -48,6 +50,12 @@ export function snapshot(
   meta: Pick<Timeline, 'lastAt' | 'status' | 'note'>,
   turns: Turn[],
   inspect: Snapshot['inspect'],
+  buildGraph: () => ExecutionGraph,
 ): Snapshot {
-  return { timeline: { ...meta, token: randomUUID(), checkedAt: Date.now(), turns }, inspect }
+  let graph: ExecutionGraph | undefined
+  return {
+    timeline: { ...meta, token: randomUUID(), checkedAt: Date.now(), turns },
+    inspect,
+    get graph() { return graph ??= buildGraph() },
+  }
 }

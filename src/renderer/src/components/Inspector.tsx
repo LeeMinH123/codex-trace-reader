@@ -1,5 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Action, ActionDetail, DeliveryLink, DetailSection, Evidence, ModelInputItem } from '../../../shared/reader'
+import { documentBlocks } from '../model/reader-text'
+import { InspectorTextReader, type InspectorDocument } from './InspectorTextReader'
+import { ReaderTextContent } from './ReaderTextContent'
 import { ActionMeta } from './views/Timeline'
 import { stamp } from './common/time'
 
@@ -32,12 +35,17 @@ function previewSnippet(sections: DetailSection[], limit = 240): { text: string;
   return { text: joined.slice(0, limit).trimEnd() + '…', truncated: true }
 }
 
-function SectionCodeList({ sections }: { sections: DetailSection[] }) {
+type OpenReader = (button: HTMLButtonElement, document: InspectorDocument) => void
+
+function SectionCodeList({ sections, onRead }: { sections: DetailSection[]; onRead: OpenReader }) {
   return (
     <div className="iwo-code-box">
       {sections.map((section) => (
         <div key={section.title} className="iwo-code-entry">
           {sections.length > 1 && <h4>{section.title}</h4>}
+          <button type="button" className="quiet iwo-expand-btn" onClick={(event) => onRead(event.currentTarget, {
+            title: section.title, text: section.text, format: 'literal',
+          })}>넓게 읽기</button>
           <pre>{section.text}</pre>
         </div>
       ))}
@@ -81,13 +89,14 @@ export function Inspector({
   const [loaded, setLoaded] = useState<{ token: string; id: string; detail: ActionDetail | null }>()
   const [inputExpanded, setInputExpanded] = useState(false)
   const [outputExpanded, setOutputExpanded] = useState(false)
-  const [messageExpanded, setMessageExpanded] = useState(false)
+  const [reader, setReader] = useState<{ id: string; token?: string; raw: boolean; document: InspectorDocument }>()
+  const readerOpener = useRef<HTMLButtonElement>(null)
   const id = action?.id
 
   useEffect(() => {
     setInputExpanded(false)
     setOutputExpanded(false)
-    setMessageExpanded(false)
+    setReader(undefined)
   }, [id])
 
   useEffect(() => {
@@ -142,10 +151,29 @@ export function Inspector({
   const statusText = !raw && action.reading?.outcome ? action.reading.outcome : action.status
   const evidence = detail?.evidence ?? []
   const firstRaw = evidence.find((item) => item.type === 'raw' && item.text)
+  const activeDocument = reader && reader.id === id && reader.token === token && reader.raw === raw ? reader.document : undefined
+  const messageDocument: InspectorDocument | undefined = messageSections.length ? {
+    title: heading, format: 'document', text: messageSections.map((section) => section.text).join('\n\n'),
+  } : undefined
+  const firstCodeSection = inputSections[0] ?? resultSections[0]
+  const firstEvidence = firstRaw ?? evidence.find((item) => item.text)
+  const primaryDocument = raw && firstEvidence?.text
+    ? { title: firstEvidence.location, text: firstEvidence.text, format: 'literal' as const }
+    : messageDocument ?? (firstCodeSection && { title: firstCodeSection.title, text: firstCodeSection.text, format: 'literal' as const })
+
+  const openReader: OpenReader = (button, document) => {
+    readerOpener.current = button
+    setReader({ id: action.id, token, raw, document })
+  }
+
+  function closeReader() {
+    setReader(undefined)
+    requestAnimationFrame(() => readerOpener.current?.focus({ preventScroll: true }))
+  }
 
   return (
-    <aside className="inspector" aria-label="실행 상세" key={id}>
-      <div className="inspector-head">
+    <aside className={activeDocument ? 'inspector is-reading' : 'inspector'} aria-label="실행 상세" key={id}>
+      <div className="inspector-head" hidden={Boolean(activeDocument)}>
         <div className="inspector-head-copy">
           {returnTo && onReturn && (
             <button type="button" className="quiet inspector-return" onClick={onReturn}>
@@ -162,10 +190,16 @@ export function Inspector({
             {raw && action.sequence !== null && ` · 순번 ${action.sequence}`}
           </p>
         </div>
-        <button type="button" className="quiet" onClick={onClose} aria-label="실행 상세 닫기">닫기</button>
+        <div className="inspector-head-actions">
+          {primaryDocument && (
+            <button type="button" className="button secondary" onClick={(event) => openReader(event.currentTarget, primaryDocument)}>넓게 읽기</button>
+          )}
+          <button type="button" className="quiet" onClick={onClose} aria-label="실행 상세 닫기">닫기</button>
+        </div>
       </div>
 
-      <div className="inspector-body">
+      {activeDocument && <InspectorTextReader document={activeDocument} onBack={closeReader} />}
+      <div className="inspector-body" hidden={Boolean(activeDocument)}>
         {(previous || next) && (
           <nav className="adjacent" aria-label="앞뒤 실행 이동">
             {previous && (
@@ -191,7 +225,12 @@ export function Inspector({
             {evidence.map((item, index) => (
               <details className="iwo-code-box" open={item === firstRaw} key={`${item.location}:${index}`}>
                 <summary>{evidenceLabels[item.type]} · {item.location}</summary>
-                {item.text ? <div className="iwo-code-entry"><pre>{item.text}</pre></div>
+                {item.text ? <div className="iwo-code-entry">
+                  <button type="button" className="quiet iwo-expand-btn" onClick={(event) => openReader(event.currentTarget, {
+                    title: item.location, text: item.text!, format: 'literal',
+                  })}>넓게 읽기</button>
+                  <pre>{item.text}</pre>
+                </div>
                   : <p className="inspector-muted">본문 미확인</p>}
               </details>
             ))}
@@ -315,18 +354,14 @@ export function Inspector({
                     <div><dt>받은 값</dt><dd>{action.reading.target.text}</dd></div>
                   </dl>
                 )}
-                {messageSections.length > 0 && (
+                {messageDocument && (
                   <div className="iwo-message-body">
-                    <p className="iwo-plain-text">
-                      {messageExpanded || !messagePreview.truncated
-                        ? messageSections.map((section) => section.text).join('\n\n')
-                        : messagePreview.text}
-                    </p>
                     {messagePreview.truncated && (
-                      <button type="button" className="quiet iwo-expand-btn" onClick={() => setMessageExpanded(!messageExpanded)}>
-                        {messageExpanded ? '본문 접기' : '전체 본문 펼치기'}
-                      </button>
+                      <button type="button" className="quiet iwo-expand-btn" onClick={(event) => openReader(event.currentTarget, messageDocument)}>전체 본문 읽기</button>
                     )}
+                    <div className="inspector-message-preview">
+                      <ReaderTextContent blocks={documentBlocks(messagePreview.text)} />
+                    </div>
                   </div>
                 )}
                 {inputSections.length > 0 && (
@@ -337,7 +372,7 @@ export function Inspector({
                     <button type="button" className="quiet iwo-expand-btn" onClick={() => setInputExpanded(!inputExpanded)}>
                       {inputExpanded ? '실제 입력 접기' : '실제 입력 펼치기'}
                     </button>
-                    {inputExpanded && <SectionCodeList sections={inputSections} />}
+                    {inputExpanded && <SectionCodeList sections={inputSections} onRead={openReader} />}
                   </div>
                 )}
               </section>
@@ -379,7 +414,7 @@ export function Inspector({
                         {outputExpanded ? '전체 반환 접기' : '전체 반환 펼치기'}
                       </button>
                     )}
-                    {outputExpanded && <SectionCodeList sections={resultSections} />}
+                    {outputExpanded && <SectionCodeList sections={resultSections} onRead={openReader} />}
                   </div>
                 )}
               </section>
@@ -388,7 +423,7 @@ export function Inspector({
             {raw && extraSections.length > 0 && (
               <section className="iwo-panel-section">
                 <h3>추가 필드</h3>
-                <SectionCodeList sections={extraSections} />
+                <SectionCodeList sections={extraSections} onRead={openReader} />
               </section>
             )}
 
@@ -403,7 +438,7 @@ export function Inspector({
                       className="inspector-flow-link"
                       onClick={() => onInspectDelivery(action, delivery)}
                     >
-                      다음 모델 요청의 입력 보기 ({stamp(delivery.targetTime, true)}) →
+                      반환이 포함된 모델 입력 ({stamp(delivery.targetTime, true)}) →
                     </button>
                   ))}
                   {flowRelations.map((relation, index) => {

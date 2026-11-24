@@ -208,6 +208,11 @@ test('상세 트레이스는 확인된 코드 실행과 하위 도구만 중첩 
     rule: 'nested_tool_call_ids',
   })
   assert.equal(byId.get('code_cells:orphanCell')?.reading?.title, '코드 실행')
+  assert.deepEqual(trace.graph.childrenByParent.get('code_cells:cell1'), ['tool_calls:sub1', 'tool_calls:sub2'])
+  assert.ok(trace.graph.edgesByNode.get('tool_calls:otherTurnTool')?.some(({ kind, from }) => kind === 'reference' && from === 'code_cells:cell1'))
+  assert.ok(trace.graph.edgesByNode.get('tool_calls:sub1')?.some(({ kind, from, provenance }) => (
+    kind === 'containment' && from === 'tool_calls:exec1' && provenance.level === 'rule-derived'
+  )))
 
   assert.deepEqual(summarizeTurnProgress(t1), { messages: 0, tools: 6, nested: 3 })
 
