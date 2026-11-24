@@ -1,5 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { documentBlocks, readerMatches, type ReaderBlock } from '../model/reader-text'
+import { ReaderTextContent } from './ReaderTextContent'
 
 export interface InspectorDocument {
   title: string
@@ -93,18 +94,7 @@ export function InspectorTextReader({ document, onBack }: { document: InspectorD
         )}
         <div className="text-reader-scroll" ref={bodyRef}>
           <div className="text-reader-content">
-            {blocks.map((block, index) => {
-              const { text } = block
-              const content = activeMatch?.block === index ? (
-                <>{text.slice(0, activeMatch.start)}<mark ref={markRef}>{text.slice(activeMatch.start, activeMatch.end)}</mark>{text.slice(activeMatch.end)}</>
-              ) : text
-              if (block.kind === 'heading') {
-                return <div key={index} data-reader-heading={index} className="text-reader-heading"
-                  role="heading" aria-level={Math.min(block.depth + 3, 6)} tabIndex={-1}>{content}</div>
-              }
-              if (block.kind === 'code') return <pre key={index}><code>{content}</code></pre>
-              return <p key={index}>{content}</p>
-            })}
+            <ReaderTextContent blocks={blocks} activeMatch={activeMatch} markRef={markRef} navigableHeadings />
           </div>
         </div>
       </div>

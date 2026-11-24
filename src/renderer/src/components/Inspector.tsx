@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Action, ActionDetail, DeliveryLink, DetailSection, Evidence, ModelInputItem } from '../../../shared/reader'
 import { documentBlocks } from '../model/reader-text'
 import { InspectorTextReader, type InspectorDocument } from './InspectorTextReader'
+import { ReaderTextContent } from './ReaderTextContent'
 import { ActionMeta } from './views/Timeline'
 import { stamp } from './common/time'
 
@@ -359,9 +360,7 @@ export function Inspector({
                       <button type="button" className="quiet iwo-expand-btn" onClick={(event) => openReader(event.currentTarget, messageDocument)}>전체 본문 읽기</button>
                     )}
                     <div className="inspector-message-preview">
-                      {documentBlocks(messagePreview.text).map((block, index) => block.kind === 'heading'
-                        ? <h4 key={index}>{block.text}</h4> : block.kind === 'code'
-                          ? <pre key={index}>{block.text}</pre> : <p key={index} className="iwo-plain-text">{block.text}</p>)}
+                      <ReaderTextContent blocks={documentBlocks(messagePreview.text)} />
                     </div>
                   </div>
                 )}

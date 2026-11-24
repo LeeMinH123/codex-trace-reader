@@ -20,3 +20,26 @@ test('본문 검색은 대소문자와 관계없이 기호를 글자 그대로 �
   ])
   assert.deepEqual(readerMatches(blocks, '  '), [])
 })
+
+test('긴 줄글은 문장 경계에서 나누고 코드 블록은 원래 덩어리를 유지한다', () => {
+  const sentence = '새 기록을 화면에서 읽기 전에 대상 파일과 작업 범위를 확인했습니다.'
+  const source = Array.from({ length: 9 }, () => sentence).join(' ')
+  const blocks = documentBlocks(source)
+
+  assert.equal(blocks.length, 3)
+  assert.ok(blocks.every((block) => block.kind === 'paragraph' && block.text.endsWith('.')))
+  assert.equal(blocks.map((block) => block.text).join(' '), source)
+  assert.deepEqual(documentBlocks(`\`\`\`\n${source}\n\`\`\``), [{ kind: 'code', text: source }])
+})
+
+test('목록, 완료 표시, 항목의 이어지는 줄을 보존하고 검색할 수 있다', () => {
+  const blocks = documentBlocks('1) 기록 확인\n  기록의 이어지는 설명\n  - [x] 범위 확인\n2) 결과 비교\n- [ ] 원문 열기')
+
+  assert.deepEqual(blocks, [
+    { kind: 'list-item', marker: '1)', indent: 0, text: '기록 확인\n기록의 이어지는 설명' },
+    { kind: 'list-item', marker: '☑', indent: 2, text: '범위 확인' },
+    { kind: 'list-item', marker: '2)', indent: 0, text: '결과 비교' },
+    { kind: 'list-item', marker: '☐', indent: 0, text: '원문 열기' },
+  ])
+  assert.deepEqual(readerMatches(blocks, '범위'), [{ block: 1, start: 0, end: 2 }])
+})
