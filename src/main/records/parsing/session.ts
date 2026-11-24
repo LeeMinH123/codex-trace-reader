@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { Action, ActionDetail, ActionKind, Turn } from '../../../shared/reader'
+import type { EvidenceRef, ExecutionEdge, SourceCoverage } from '../../../shared/execution-graph'
+import { buildExecutionGraph, type EventRecord } from '../core/execution-graph'
 import { fields, messageText, preview, string, type Fields } from '../core/json'
 import { parseRollout, type RolloutPart } from './rollout'
 import {
@@ -19,13 +21,21 @@ export interface SessionRecord {
 }
 
 interface RecordDetail {
+  sourceId: string
   path: string
   raw: string
   line: number
   rule: string
+  turnProvenance: EventRecord['turnProvenance']
+  actor?: EventRecord['actor']
+  information?: EventRecord['information']
   fingerprint?: string
   tool?: { id: string; kind: 'request' | 'result'; name?: string }
   resultId?: string
+}
+
+function rolloutEvidence(record: RecordDetail): EvidenceRef {
+  return { sourceId: record.sourceId, kind: 'jsonl', availability: 'present', location: `${record.path} · ${record.line}번째 줄` }
 }
 
 function outputPreviewText(value: unknown): string | undefined {
@@ -193,10 +203,19 @@ export function assembleSession(parts: RolloutPart[], historyNote?: string): Ses
         if (!explicit || explicit === active) active = undefined
       }
       details.set(action.id, {
-        path: part.info.path, raw, line,
+        sourceId: part.info.id, path: part.info.path, raw, line,
         rule: explicit ? '레코드의 payload.turn_id로 묶었습니다.'
           : turnId ? '턴 시작과 종료 사이의 파일 위치로 묶었습니다.'
             : '레코드에서 연결된 턴을 확인할 수 없습니다.',
+        turnProvenance: explicit ? { level: 'id-confirmed', rule: 'payload.turn_id' }
+          : turnId ? { level: 'rule-derived', rule: '턴 시작과 종료 사이의 JSONL 위치' }
+            : { level: 'unavailable', rule: '턴 ID 미확인' },
+        actor: isUser ? { id: `agent:${id}:user`, label: '사용자', role: 'user', provenance: { level: 'recorded' } }
+          : response || (type === 'event_msg' && subtype === 'agent_message')
+            ? { id: `agent:${id}:assistant`, label: '어시스턴트', role: 'agent', provenance: { level: 'rule-derived', rule: '채팅의 어시스턴트 역할' } }
+            : undefined,
+        information: toolRequest ? 'call' : toolResult ? 'result'
+          : kind === 'instruction' ? 'instruction' : kind === 'message' ? 'message' : undefined,
         fingerprint: message && createHash('sha256').update(`${message.stage}:${isUser ? userRequest(body ?? '') : body}`).digest('hex'),
         tool: callId && (toolRequest || toolResult)
           ? { id: callId, kind: toolRequest ? 'request' : 'result', name: toolRequest ? toolName(item.name) : undefined }
@@ -218,6 +237,27 @@ export function assembleSession(parts: RolloutPart[], historyNote?: string): Ses
     if (ids.length > 0) turn.instructionIds = ids
   }
   const opening = ordered.flatMap((turn) => turn.actions).find((action) => action.reading?.stage === 'request')
+  const buildGraph = () => {
+    const sources = parts.map((part, index): SourceCoverage => ({
+      id: part.info.id, path: part.info.path, boundary: part.info.base,
+      limitations: [
+        ...(part.invalidBase || (part.info.base && part.info.base.id !== parts[index - 1]?.info.id) || (index === 0 && historyNote)
+          ? ['history-base-unavailable' as const] : []),
+        ...(part.partial ? ['partial-jsonl' as const] : []),
+      ],
+    }))
+    const edges = [...details.entries()].flatMap(([from, detail]): ExecutionEdge[] => detail.resultId ? [{
+      kind: 'tool-result', from, to: detail.resultId, provenance: { level: 'id-confirmed', rule: 'payload.call_id' },
+    }] : [])
+    return buildExecutionGraph(ordered, { kind: 'rollout', sources }, (actionId) => {
+      const record = details.get(actionId)!
+      const output = record.resultId ? details.get(record.resultId) : undefined
+      return {
+        sourceId: record.sourceId, turnProvenance: record.turnProvenance, actor: record.actor, information: record.information,
+        evidence: output ? [rolloutEvidence(record), rolloutEvidence(output)] : [rolloutEvidence(record)],
+      }
+    }, edges)
+  }
   return {
     id, path, rolloutId, sourceIds: parts.map((part) => part.info.id),
     title: head.title || plainPreview(opening?.reading?.text ?? '', 82) || '제목 없는 채팅',
@@ -243,9 +283,9 @@ export function assembleSession(parts: RolloutPart[], historyNote?: string): Ses
         ],
         relations: detail.resultId ? [{ target: detail.resultId, label: '도구 반환 기록', rule: 'payload.call_id' }] : [],
         evidence: [detail, ...(output ? [output] : [])].map((record) => ({
-          type: 'raw', location: `${record.path} · ${record.line}번째 줄`, text: record.raw,
+          type: 'raw', location: rolloutEvidence(record).location, text: record.raw,
         })),
       }
-    }),
+    }, buildGraph),
   }
 }

@@ -151,6 +151,10 @@ test('상세 트레이스는 확인된 전달 화살표와 모델 요청의 새�
   const deliveredItemId = readSkill.deliveries![0].itemIds[0]
   assert.ok(deliveredItemId.startsWith('conversation_items:skillOut:'))
   assert.equal(unseenTool.deliveries, undefined)
+  const executionLinks = trace.graph.edgesByNode.get(readSkill.id) ?? []
+  assert.ok(executionLinks.some(({ kind, from }) => kind === 'model-call' && from === 'inference_calls:call1'))
+  assert.ok(executionLinks.some(({ kind, to }) => kind === 'tool-result' && to === deliveredItemId))
+  assert.deepEqual(executionLinks.find(({ kind }) => kind === 'delivery')?.itemIds, [deliveredItemId])
 
   assert.equal(t1.instructionIds?.length, 1)
   assert.ok(t1.instructionIds?.[0].startsWith('conversation_items:sys0:'))
