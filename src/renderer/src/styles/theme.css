@@ -556,6 +556,9 @@ mark.search-hit {
   overflow: auto;
   color: var(--ink);
 }
+.raw-evidence { margin: 14px 0; min-width: 0; }
+.raw-evidence summary { color: var(--ink); font-size: .8rem; overflow-wrap: anywhere; cursor: pointer; }
+.raw-evidence details[open] summary { margin-bottom: 8px; }
 
 .model-group-label { font-size: .82rem; font-weight: 620; color: var(--ink); }
 .model-input-list {

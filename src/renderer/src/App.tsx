@@ -16,12 +16,18 @@ import { indexDestinations, rolloutLabel } from './model/turn-destinations'
 
 type RecordMode = 'session' | 'trace'
 type Mode = 'recent' | RecordMode
-type Reading = { selectedTurnId: string | null; expandedGroups: Set<string>; selected: string | null }
+type Reading = {
+  selectedTurnId: string | null
+  expandedGroups: Set<string>
+  selected: string | null
+  overviewOpen: boolean
+  overviewTurnId?: string
+}
 type TurnJump = { key: string; turn: string; offset?: number }
 type TurnReturn = { rollout: string; bundle: string; turn: string; offset?: number }
 type InspectContext = { highlightItemIds: string[]; returnTo: { id: string; label: string } | null }
 
-const emptyReading: Reading = { selectedTurnId: null, expandedGroups: new Set(), selected: null }
+const emptyReading: Reading = { selectedTurnId: null, expandedGroups: new Set(), selected: null, overviewOpen: true }
 const emptyInspectContext: InspectContext = { highlightItemIds: [], returnTo: null }
 const emptySearch: TimelineSearchResult = {
   words: [],
@@ -47,9 +53,8 @@ export function App() {
   const [timelineQuery, setTimelineQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const [matchesOnly, setMatchesOnly] = useState(false)
-  const [activeMatchIndex, setActiveMatchIndex] = useState(-1)
+  const [activeMatchId, setActiveMatchId] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<TimelineViewMode>('story')
-  const [overviewOpenBySource, setOverviewOpenBySource] = useState<Record<string, boolean>>({})
   const [busy, setBusy] = useState('')
   const busyRef = useRef(false)
   const [problem, setProblem] = useState('')
@@ -62,9 +67,10 @@ export function App() {
   const searchInputRef = useRef<HTMLInputElement>(null)
   const focusSearchRef = useRef(false)
   const positions = useRef(new Map<string, number>())
-  const restore = useRef<{ key: string; top: number; selector?: string; offset?: number } | null>(null)
-  const jump = useRef<string | null>(null)
-  const matchJump = useRef<string | null>(null)
+  const restore = useRef<{ key: string; top: number; selector?: string; offset?: number; focus?: boolean } | null>(null)
+  const jump = useRef<{ key: string; id: string; block: ScrollLogicalPosition; focus?: boolean } | null>(null)
+  const overviewOrigin = useRef(new Map<string, string>())
+  const rawOrigin = useRef<{ key: string; view: TimelineViewMode; id: string; top: number } | null>(null)
   const lastFocused = useRef<string | null>(null)
 
   const raw = viewMode === 'raw'
@@ -80,8 +86,9 @@ export function App() {
   const bundle = workspace?.bundles.find(({ id }) => id === workspace.selectedId)
   const data = mode === 'session' ? session?.timeline : mode === 'trace' ? workspace?.trace ?? undefined : undefined
   const key = sourceKey(mode, mode === 'session' ? session?.rolloutId : mode === 'trace' ? bundle?.id : undefined)
-  const { selected, selectedTurnId, expandedGroups } = reading[key] ?? emptyReading
-  const overviewOpen = overviewOpenBySource[key] ?? true
+  const { selected, selectedTurnId, expandedGroups, overviewOpen, overviewTurnId } = reading[key] ?? emptyReading
+  const showingOverview = Boolean(data && overviewOpen)
+  const surface = showingOverview ? `${key}:overview` : key
 
   const index = useMemo(() => {
     const actions = new Map<string, Action>()
@@ -91,9 +98,7 @@ export function App() {
         actions.set(action.id, action)
         groups.set(action.id, { turn: turn.id, groupIds: [] })
       }
-      const visible = raw
-        ? turn.actions.map((action) => ({ action, groupIds: [] as string[] }))
-        : visibleReadingOrder(turn)
+      const visible = visibleReadingOrder(turn)
       for (const [position, entry] of visible.entries()) {
         groups.set(entry.action.id, {
           turn: turn.id,
@@ -104,32 +109,36 @@ export function App() {
       }
     }
     return { actions, groups }
-  }, [data, raw])
+  }, [data])
 
   const overview = useMemo(
-    () => (data ? buildWorkOverview(data.turns, index.actions) : null),
-    [data, index.actions],
+    () => (data && showingOverview ? buildWorkOverview(data.turns) : null),
+    [data, showingOverview],
   )
 
   const searchResult = useMemo(
     () => (data ? searchTimeline(data.turns, timelineQuery, raw) : emptySearch),
     [data, timelineQuery, raw],
   )
-  const baseTurns = useMemo(() => visibleTimelineTurns(data?.turns ?? [], raw), [data, raw])
+  const selectedAction = selected ? index.actions.get(selected) : undefined
+  const adjacent = selected ? index.groups.get(selected) : undefined
+  const selectedTurn = adjacent?.turn === selectedTurnId ? selectedTurnId : null
+  const baseTurns = useMemo(
+    () => visibleTimelineTurns(data?.turns ?? [], raw, selectedTurn),
+    [data, raw, selectedTurn],
+  )
   const filtering = matchesOnly && searchResult.words.length > 0
   const displayedTurns = useMemo(
-    () => (filtering ? baseTurns.filter((turn) => (searchResult.turnMatchCounts.get(turn.id) ?? 0) > 0) : baseTurns),
-    [baseTurns, filtering, searchResult],
+    () => (filtering ? baseTurns.filter((turn) => turn.id === selectedTurn || searchResult.turnMatchCounts.has(turn.id)) : baseTurns),
+    [baseTurns, filtering, searchResult, selectedTurn],
   )
   const activeTurn = useMemo(
     () => displayedTurns.find((turn) => turn.id === selectedTurnId) ?? displayedTurns[0],
     [displayedTurns, selectedTurnId],
   )
-  const activeMatch = activeMatchIndex >= 0 && activeMatchIndex < searchResult.matches.length
-    ? searchResult.matches[activeMatchIndex]
-    : undefined
-  const selectedAction = selected ? index.actions.get(selected) : undefined
-  const adjacent = selected ? index.groups.get(selected) : undefined
+  const overviewTurn = overview?.turns.find((turn) => turn.id === (overviewTurnId ?? selectedTurnId)) ?? overview?.turns[0]
+  const activeMatchIndex = activeMatchId === null ? -1 : searchResult.matches.findIndex((match) => match.actionId === activeMatchId)
+  const rawPosition = raw && selected ? activeTurn?.actions.findIndex((action) => action.id === selected) ?? -1 : -1
   const traceDestinations = useMemo(() => indexDestinations(
     workspace?.bundles ?? [], workspace?.traceTurns ?? [], (info) => stamp(info.startedAt),
   ), [workspace?.bundles, workspace?.traceTurns])
@@ -144,43 +153,48 @@ export function App() {
   useLayoutEffect(() => {
     const area = scroller.current
     if (!area) return
-    area.scrollTop = positions.current.get(key) ?? 0
-  }, [key])
+    area.scrollTop = positions.current.get(surface) ?? 0
+    const origin = showingOverview && overviewOrigin.current.get(key)
+    if (origin) {
+      area.querySelector<HTMLElement>(`[data-overview-entry="${CSS.escape(origin)}"]`)?.focus({ preventScroll: true })
+    }
+  }, [key, showingOverview, surface])
 
   useLayoutEffect(() => {
     const area = scroller.current
     const pending = restore.current
-    if (area && pending?.key === key) {
+    if (area && pending?.key === surface) {
       restore.current = null
-      const element = pending.selector ? area.querySelector(pending.selector) : null
+      const element = pending.selector ? area.querySelector<HTMLElement>(pending.selector) : null
       area.scrollTop = pending.top
       if (element && pending.offset !== undefined) {
         area.scrollTop += element.getBoundingClientRect().top - area.getBoundingClientRect().top - pending.offset
       }
+      if (pending.focus) element?.focus({ preventScroll: true })
     }
-  }, [data?.token, key, busy])
+  }, [data?.token, surface, viewMode, busy])
 
   useLayoutEffect(() => {
-    if (!jump.current || jump.current !== selected) return
-    const row = scroller.current?.querySelector<HTMLElement>(`[data-action="${CSS.escape(jump.current)}"]`)
-    row?.scrollIntoView({ block: 'nearest' })
-    jump.current = null
-  }, [selected, selectedTurnId, expandedGroups, viewMode])
-
-  useLayoutEffect(() => {
-    if (!matchJump.current) return
-    const row = scroller.current?.querySelector<HTMLElement>(`[data-action="${CSS.escape(matchJump.current)}"]`)
-    if (row) {
-      row.scrollIntoView({ block: 'center' })
-      matchJump.current = null
+    const target = jump.current
+    if (!target || target.key !== key || showingOverview) return
+    const scrollToAction = () => {
+      if (jump.current !== target) return
+      const row = scroller.current?.querySelector<HTMLElement>(`[data-action="${CSS.escape(target.id)}"]`)
+      if (!row?.getClientRects().length) return
+      row.scrollIntoView({ block: target.block })
+      if (target.focus) row.focus({ preventScroll: true })
+      jump.current = null
     }
+    scrollToAction()
+    if (!jump.current) return
+    const frame = requestAnimationFrame(scrollToAction)
+    return () => cancelAnimationFrame(frame)
   })
 
   useEffect(() => {
-    setActiveMatchIndex(-1)
+    setActiveMatchId(null)
     setInspectContext(emptyInspectContext)
-    matchJump.current = null
-  }, [key, raw, data?.token])
+  }, [key, data?.token])
 
   useEffect(() => {
     if (mode === 'recent' || !data) return
@@ -193,19 +207,20 @@ export function App() {
         } else {
           focusSearchRef.current = true
           setSearchOpen(true)
+          setReading((all) => ({ ...all, [key]: { ...(all[key] ?? emptyReading), overviewOpen: false } }))
         }
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [mode, data, searchOpen])
+  }, [mode, data, searchOpen, key])
 
   useLayoutEffect(() => {
     if (!focusSearchRef.current || !searchOpen) return
     focusSearchRef.current = false
     searchInputRef.current?.focus()
     searchInputRef.current?.select()
-  }, [searchOpen])
+  }, [searchOpen, showingOverview])
 
   useLayoutEffect(() => {
     const area = scroller.current
@@ -224,34 +239,62 @@ export function App() {
   }
 
   function setOverviewVisible(open: boolean) {
-    setOverviewOpenBySource((all) => ({ ...all, [key]: open }))
-    if (scroller.current) scroller.current.scrollTop = 0
+    if (scroller.current) positions.current.set(surface, scroller.current.scrollTop)
+    updateReading((prior) => ({ ...prior, overviewOpen: open }))
   }
 
   function focusOverviewTurn(id: string) {
-    setInspectContext(emptyInspectContext)
-    updateReading((prior) => ({ ...prior, selectedTurnId: id, selected: null }))
+    overviewOrigin.current.delete(key)
+    updateReading((prior) => ({ ...prior, overviewTurnId: id }))
   }
 
-  function openOverviewStage(id: string, view: 'story' | 'raw') {
+  function openOverviewEntry(turnId: string, view: 'story' | 'raw', entryId: string, actionId?: string, chapterId?: string) {
+    overviewOrigin.current.set(key, entryId)
+    rawOrigin.current = null
     setOverviewVisible(false)
+    updateReading((prior) => ({ ...prior, overviewTurnId: turnId }))
     setViewMode(view)
-    selectAction(id, { navigate: true, keepReading: true })
+    if (actionId) selectAction(actionId, { navigate: true, keepReading: true, focus: true })
+    else {
+      setMatchesOnly(false)
+      selectTurn(turnId)
+    }
+    if (chapterId && view === 'story') toggleTurnGroups([chapterId], true)
   }
 
   function switchViewMode(next: TimelineViewMode) {
-    if (!overviewOpen && selected && index.actions.has(selected)) jump.current = selected
-    if (raw && next !== 'raw' && selectedAction && !selectedAction.reading
-      && selectedAction.kind !== 'model' && selectedAction.kind !== 'instruction') {
-      closeInspector()
-    }
+    if (next !== viewMode) rawOrigin.current = null
+    if (showingOverview) setOverviewVisible(false)
+    const target = selectedAction?.id ?? (activeMatchIndex >= 0 ? activeMatchId : null)
+    if (target) jump.current = { key, id: target, block: 'nearest' }
     setViewMode(next)
   }
 
+  function showRawEvidence() {
+    if (!selected || raw) return
+    const origin = { key, view: viewMode, id: selected, top: scroller.current?.scrollTop ?? 0 }
+    switchViewMode('raw')
+    rawOrigin.current = origin
+  }
+
+  function returnFromRawEvidence() {
+    const origin = rawOrigin.current
+    if (origin?.key !== key) return
+    rawOrigin.current = null
+    selectAction(origin.id, { keepReading: true })
+    restore.current = { key, top: origin.top, selector: `[data-action="${CSS.escape(origin.id)}"]`, focus: true }
+    setViewMode(origin.view)
+  }
+
   function selectTurn(id: string) {
-    setOverviewVisible(false)
-    updateReading((prior) => ({ ...prior, selectedTurnId: id }))
-    if (scroller.current) scroller.current.scrollTop = 0
+    jump.current = null
+    setInspectContext(emptyInspectContext)
+    if (showingOverview) setOverviewVisible(false)
+    updateReading((prior) => ({
+      ...prior, selectedTurnId: id, selected: prior.selectedTurnId === id ? prior.selected : null,
+    }))
+    positions.current.set(key, 0)
+    if (!showingOverview && scroller.current) scroller.current.scrollTop = 0
   }
 
   function toggleGroup(id: string) {
@@ -276,19 +319,19 @@ export function App() {
 
   function selectAction(
     id: string,
-    options: { navigate?: boolean; keepReading?: boolean; preserveContext?: boolean } = {},
+    options: { navigate?: boolean; keepReading?: boolean; preserveContext?: boolean; focus?: boolean } = {},
   ) {
     const group = index.groups.get(id)
     if (!group) return
+    jump.current = options.navigate ? { key, id, block: 'nearest', focus: options.focus } : null
     if (options.navigate) {
-      jump.current = id
       if (!options.keepReading && !index.actions.get(id)?.reading) setViewMode('raw')
     }
     if (!options.preserveContext) setInspectContext(emptyInspectContext)
     lastFocused.current = id
-    const matchIndex = searchResult.matches.findIndex((match) => match.actionId === id)
-    if (matchIndex >= 0) setActiveMatchIndex(matchIndex)
+    if (searchResult.matchedActions.has(id)) setActiveMatchId(id)
     updateReading((prior) => ({
+      ...prior,
       selected: id,
       selectedTurnId: group.turn,
       expandedGroups: new Set([...prior.expandedGroups, ...group.groupIds]),
@@ -314,16 +357,16 @@ export function App() {
 
   function handleTimelineQuery(value: string) {
     setTimelineQuery(value)
-    setActiveMatchIndex(-1)
-    matchJump.current = null
+    setActiveMatchId(null)
+    jump.current = null
     if (!value.trim()) setMatchesOnly(false)
   }
 
   function clearTimelineSearch() {
     setTimelineQuery('')
     setMatchesOnly(false)
-    setActiveMatchIndex(-1)
-    matchJump.current = null
+    setActiveMatchId(null)
+    jump.current = null
   }
 
   function stepMatch(delta: 1 | -1) {
@@ -333,18 +376,17 @@ export function App() {
       ? (delta > 0 ? 0 : matches.length - 1)
       : (activeMatchIndex + delta + matches.length) % matches.length
     const target = matches[nextIdx]
-    const alreadyVisible = nextIdx === activeMatchIndex
-      && activeTurn?.id === target.turnId
-      && target.groupIds.every((id) => expandedGroups.has(id))
-    if (alreadyVisible) {
-      scroller.current?.querySelector<HTMLElement>(`[data-action="${CSS.escape(target.actionId)}"]`)?.scrollIntoView({ block: 'center' })
+    const row = scroller.current?.querySelector<HTMLElement>(`[data-action="${CSS.escape(target.actionId)}"]`)
+    if (nextIdx === activeMatchIndex && activeTurn?.id === target.turnId && row?.getClientRects().length) {
+      row.scrollIntoView({ block: 'center' })
       return
     }
-    setActiveMatchIndex(nextIdx)
-    matchJump.current = target.actionId
+    setActiveMatchId(target.actionId)
+    jump.current = { key, id: target.actionId, block: 'center' }
     updateReading((prior) => ({
       ...prior,
       selectedTurnId: target.turnId,
+      selected: index.groups.get(prior.selected ?? '')?.turn === target.turnId ? prior.selected : null,
       expandedGroups: new Set([...prior.expandedGroups, ...target.groupIds]),
     }))
   }
@@ -359,6 +401,7 @@ export function App() {
         return {
           ...prior,
           selectedTurnId: keepCurrent ? prior.selectedTurnId : firstMatchTurn,
+          selected: keepCurrent || index.groups.get(prior.selected ?? '')?.turn === firstMatchTurn ? prior.selected : null,
           expandedGroups: new Set([...prior.expandedGroups, ...searchResult.matches.flatMap((match) => match.groupIds)]),
         }
       })
@@ -366,6 +409,7 @@ export function App() {
   }
 
   function closeInspector() {
+    jump.current = null
     setInspectContext(emptyInspectContext)
     updateReading((prior) => ({ ...prior, selected: null }))
     if (lastFocused.current) {
@@ -402,7 +446,6 @@ export function App() {
       setCandidates(null)
       if (session?.id !== result.session.id) {
         setReading({})
-        setOverviewOpenBySource({})
         setViewMode('story')
         setSearchOpen(false)
         setInspectContext(emptyInspectContext)
@@ -410,6 +453,8 @@ export function App() {
         const recentPosition = positions.current.get(sourceKey('recent')) ?? 0
         positions.current.clear()
         positions.current.set(sourceKey('recent'), recentPosition)
+        overviewOrigin.current.clear()
+        rawOrigin.current = null
         turnReturn.current = null
         setTurnJump(null)
       }
@@ -453,9 +498,10 @@ export function App() {
       return {
         ...all,
         [nextKey]: {
-          selected: nextMode === 'trace' ? null : prior.selected,
+          ...prior,
+          selected: nextMode === 'session' && prior.selectedTurnId === turn ? prior.selected : null,
           selectedTurnId: turn,
-          expandedGroups: prior.expandedGroups,
+          overviewOpen: false,
         },
       }
     })
@@ -507,7 +553,7 @@ export function App() {
         const attribute = item?.dataset.action ? 'data-action' : 'data-turn'
         const value = item?.getAttribute(attribute)
         const anchor = {
-          key, top: area.scrollTop,
+          key: surface, top: area.scrollTop,
           selector: value ? `[${attribute}="${CSS.escape(value)}"]` : undefined,
           offset: item ? item.getBoundingClientRect().top - y : undefined,
         }
@@ -561,7 +607,7 @@ export function App() {
   const issues = workspace?.issues.filter(({ path }) => mode !== 'recent' || path.toLowerCase().endsWith('.jsonl')) ?? []
   const hasIssues = problem || issues.length
   const back = turnReturn.current
-  const showSearchBar = Boolean(data && (searchOpen || timelineQuery.trim().length > 0))
+  const showSearchBar = Boolean(data && !showingOverview && (searchOpen || timelineQuery.trim().length > 0))
 
   return (
     <div className="app">
@@ -582,14 +628,15 @@ export function App() {
                   } else {
                     focusSearchRef.current = true
                     setSearchOpen(true)
+                    if (showingOverview) setOverviewVisible(false)
                   }
                 }}
               >
                 검색
               </button>
-              <button type="button" className="button secondary" aria-controls="work-overview"
-                aria-expanded={overviewOpen} onClick={() => setOverviewVisible(!overviewOpen)}>
-                {overviewOpen ? '개요 접기' : '전체 작업'}
+              <button type="button" className="button secondary" aria-controls={showingOverview ? 'work-overview' : undefined}
+                aria-expanded={showingOverview} onClick={() => setOverviewVisible(!showingOverview)}>
+                {showingOverview ? '개요 닫기' : '작업 개요'}
               </button>
               <div className="header-view-switch" role="group" aria-label="보기 방식">
                 {viewLabels.map((item) => (
@@ -597,7 +644,7 @@ export function App() {
                     key={item.id}
                     type="button"
                     className="header-view-option"
-                    aria-pressed={viewMode === item.id}
+                    aria-pressed={!showingOverview && viewMode === item.id}
                     onClick={() => switchViewMode(item.id)}
                   >
                     {item.label}
@@ -613,14 +660,14 @@ export function App() {
         </div>
       </header>
       {workspace && (
-        <div className={data && selectedAction ? 'workspace has-timeline' : 'workspace'}>
+        <div className={data && !showingOverview && selectedAction ? 'workspace has-timeline' : 'workspace'}>
           <Sources
             workspace={workspace}
             mode={mode}
             busy={Boolean(busy)}
-            turns={displayedTurns}
-            selectedTurnId={activeTurn?.id ?? null}
-            turnMatchCounts={searchResult.turnMatchCounts}
+            turns={showingOverview ? data?.turns ?? [] : displayedTurns}
+            selectedTurnId={(showingOverview ? overviewTurn?.id : activeTurn?.id) ?? null}
+            turnMatchCounts={showingOverview ? emptySearch.turnMatchCounts : searchResult.turnMatchCounts}
             onRecent={() => { setProblem(''); setMode('recent') }}
             onSession={() => setMode('session')}
             onOpenSession={openSession}
@@ -639,7 +686,7 @@ export function App() {
             onExecutable={chooseExecutable}
           />
           <main className="content" aria-label={mode === 'recent' ? '채팅 목록' : '요청 읽기'} ref={scroller} tabIndex={-1}
-            onScroll={(event) => positions.current.set(key, event.currentTarget.scrollTop)}>
+            onScroll={(event) => positions.current.set(surface, event.currentTarget.scrollTop)}>
             {hasIssues ? (
               <div className="issues" role="status">
                 {problem && <div>{problem}</div>}
@@ -658,11 +705,7 @@ export function App() {
               onQuery={setRecentQuery} onOpen={openRecentChat} onOpenFile={openSession}/>}
             {mode !== 'recent' && session && (
               <>
-                {mode === 'session' && data?.note && !overviewOpen && <p className="timeline-note session-note">{data.note}</p>}
-                {mode === 'session' && workspace.bundles.length === 0 && (
-                  <TraceSearch result={workspace.traceSearch} busy={Boolean(busy)}
-                    onFind={findBundles} onRoot={chooseTraceRoot} onOpen={openBundle}/>
-                )}
+                {mode === 'session' && data?.note && !showingOverview && <p className="timeline-note session-note">{data.note}</p>}
                 {mode === 'trace' && !data && (
                   <TraceSetup workspace={workspace} busy={Boolean(busy)} onHint={useHint} onExecutable={chooseExecutable}
                     onReturn={back && back.bundle === bundle?.id ? () => openSessionTurn(back.rollout, back.turn) : undefined}/>
@@ -675,7 +718,7 @@ export function App() {
                     matchCount={searchResult.matches.length}
                     activeMatchIndex={activeMatchIndex}
                     turnCount={baseTurns.length}
-                    visibleTurnCount={displayedTurns.length}
+                    visibleTurnCount={searchResult.turnMatchCounts.size}
                     onQuery={handleTimelineQuery}
                     onPrev={() => stepMatch(-1)}
                     onNext={() => stepMatch(1)}
@@ -687,19 +730,23 @@ export function App() {
                     }}
                   />
                 )}
-                {data && overview && overviewOpen && (
+                {data && overview && showingOverview && (
                   <WorkOverview
                     overview={overview}
-                    selectedTurnId={activeTurn?.id}
+                    selectedTurnId={overviewTurn?.id}
                     source={mode === 'trace' ? 'trace' : 'session'}
                     recordStatus={data.status}
                     note={data.note}
+                    traceUnavailable={mode === 'session' && (!overviewTurn?.threadTurnId || !traceDestinations.has(overviewTurn.threadTurnId))}
                     onFocusTurn={focusOverviewTurn}
-                    onOpenStage={openOverviewStage}
-                    onClose={() => setOverviewVisible(false)}
+                    onOpenEntry={openOverviewEntry}
                   />
                 )}
-                {data && (
+                {mode === 'session' && workspace.bundles.length === 0 && (
+                  <TraceSearch result={workspace.traceSearch} busy={Boolean(busy)}
+                    onFind={findBundles} onRoot={chooseTraceRoot} onOpen={openBundle}/>
+                )}
+                {data && !showingOverview && (
                   <Timeline
                     turn={activeTurn}
                     mode={mode}
@@ -709,7 +756,7 @@ export function App() {
                     selected={selectedAction?.id ?? null}
                     expandedGroups={expandedGroups}
                     search={searchResult}
-                    activeMatchId={activeMatch?.actionId ?? null}
+                    activeMatchId={activeMatchIndex >= 0 ? activeMatchId : null}
                     matchesOnly={matchesOnly}
                     onToggleGroup={toggleGroup}
                     onToggleTurnGroups={toggleTurnGroups}
@@ -722,17 +769,19 @@ export function App() {
               </>
             )}
           </main>
-          {data && selectedAction && (
+          {data && !showingOverview && selectedAction && (
             <Inspector
               token={data.token}
               action={selectedAction}
-              previous={adjacent?.previous}
-              next={adjacent?.next}
+              previous={raw ? activeTurn?.actions[rawPosition - 1] : adjacent?.previous}
+              next={raw ? (rawPosition >= 0 ? activeTurn?.actions[rawPosition + 1] : undefined) : adjacent?.next}
               actions={index.actions}
               raw={raw}
               highlightItemIds={inspectContext.highlightItemIds}
               returnTo={inspectContext.returnTo}
               onReturn={returnFromDelivery}
+              onShowRaw={raw ? undefined : showRawEvidence}
+              onReturnFromRaw={raw && rawOrigin.current?.key === key ? returnFromRawEvidence : undefined}
               onSelect={(id, options) => selectAction(id, { navigate: true, ...options })}
               onInspectDelivery={inspectDelivery}
               onClose={closeInspector}
