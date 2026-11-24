@@ -29,8 +29,8 @@ export function searchWords(query: string): string[] {
   return normalizeSearch(query.trim()).split(/\s+/).filter(Boolean)
 }
 
-export function visibleTimelineTurns(turns: Turn[], raw: boolean): Turn[] {
-  return raw ? turns : turns.filter((turn) => turn.threadTurnId || turn.actions.some((action) => action.reading))
+export function visibleTimelineTurns(turns: Turn[], raw: boolean, selectedTurnId?: string | null): Turn[] {
+  return raw ? turns : turns.filter((turn) => turn.id === selectedTurnId || turn.threadTurnId || turn.actions.some((action) => action.reading))
 }
 
 function searchFields(action: Action, raw: boolean): { visible: string[]; hidden: string[] } {

@@ -95,29 +95,57 @@ export function Timeline({
   }
 
   const filtering = matchesOnly && search.words.length > 0
+  const pinnedActions = [...new Set([selected, activeMatchId])].flatMap((id) => {
+    const action = id && turn.actions.find((item) => item.id === id)
+    if (!action) return []
+    if (viewMode === 'story' && (action.reading || (action.kind === 'instruction'
+      && (!turn.instructionIds?.length || turn.instructionIds.includes(action.id))))) return []
+    if (graphForSync?.stages.some((stage) => stage.nodes.some((node) =>
+      node.actionId === id || node.actions?.some((item) => item.id === id)
+      || node.nestedChildren?.some((item) => item.id === id)))) return []
+    if (viewMode === 'waterfall' && timelineData?.bars.some((bar) => bar.action.id === id)) return []
+    return [action]
+  })
+  const pinned = !raw && pinnedActions.length > 0 && (
+    <div className="pinned-actions" aria-label="현재 선택과 검색 위치">
+      {pinnedActions.map((action) => (
+        <button type="button" className="action-row" key={action.id} data-action={action.id}
+          aria-pressed={selected === action.id} onClick={() => onSelect(action.id)}>
+          <span className="action-copy">
+            <small>{selected === action.id ? '선택한 기록' : '현재 검색 결과'}</small>
+            <span className="action-label"><HighlightedText text={action.reading?.title ?? action.label} words={search.words} /></span>
+          </span>
+        </button>
+      ))}
+    </div>
+  )
 
   if (viewMode === 'story') {
     return (
-      <StoryView
-        turn={turn}
-        mode={mode}
-        actionsById={actionsById}
-        selected={selected}
-        expandedGroups={expandedGroups}
-        search={search}
-        activeMatchId={activeMatchId}
-        matchesOnly={matchesOnly}
-        onToggleGroup={onToggleGroup}
-        onToggleTurnGroups={onToggleTurnGroups}
-        onSelect={onSelect}
-        onInspectDelivery={onInspectDelivery}
-        turnLink={turnLink}
-      />
+      <>
+        {pinned}
+        <StoryView
+          key={turn.id}
+          turn={turn}
+          mode={mode}
+          actionsById={actionsById}
+          selected={selected}
+          expandedGroups={expandedGroups}
+          search={search}
+          activeMatchId={activeMatchId}
+          matchesOnly={matchesOnly}
+          onToggleGroup={onToggleGroup}
+          onToggleTurnGroups={onToggleTurnGroups}
+          onSelect={onSelect}
+          onInspectDelivery={onInspectDelivery}
+          turnLink={turnLink}
+        />
+      </>
     )
   }
 
   if (raw) {
-    const rawActions = filtering ? turn.actions.filter((action) => search.matchedActions.has(action.id)) : turn.actions
+    const rawActions = filtering ? turn.actions.filter((action) => action.id === selected || search.matchedActions.has(action.id)) : turn.actions
     return (
       <div className="turn-focus" data-turn={turn.id}>
         <div className="turn-focus-head">
@@ -184,6 +212,8 @@ export function Timeline({
         </small>
         {turn.threadTurnId && turnLink(turn.threadTurnId)}
       </div>
+
+      {pinned}
 
       {timelineData && timelineData.bars.length > 0 && (
         <TimeStrip

@@ -221,8 +221,7 @@ function collectNested(progress: Action[]) {
   return { nestedIds, descendantsOf }
 }
 
-export function buildTurnStory(turn: Turn, actionsById: Map<string, Action>): TurnStory {
-  const iwo = buildTurnIwo(turn, actionsById)
+export function buildStoryChapters(turn: Turn): StoryChapter[] {
   const progress = turn.actions.filter((action) => action.reading?.stage === 'progress')
   const { nestedIds, descendantsOf } = collectNested(progress)
   const topProgress = progress.filter((action) => !nestedIds.has(action.id))
@@ -329,10 +328,15 @@ export function buildTurnStory(turn: Turn, actionsById: Map<string, Action>): Tu
     flushPhase()
   }
 
+  return chapters
+}
+
+export function buildTurnStory(turn: Turn, actionsById: Map<string, Action>): TurnStory {
+  const iwo = buildTurnIwo(turn, actionsById)
   return {
     requests: iwo.input.requests,
     instructions: iwo.input.instructions,
-    chapters,
+    chapters: buildStoryChapters(turn),
     answers: iwo.output.answers,
     modifiedFiles: iwo.output.modifiedFiles,
     verifications: iwo.output.verifications,

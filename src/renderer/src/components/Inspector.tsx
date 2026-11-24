@@ -1,9 +1,14 @@
 import { useEffect, useState } from 'react'
-import type { Action, ActionDetail, DeliveryLink, DetailSection, ModelInputItem } from '../../../shared/reader'
+import type { Action, ActionDetail, DeliveryLink, DetailSection, Evidence, ModelInputItem } from '../../../shared/reader'
 import { ActionMeta } from './views/Timeline'
 import { stamp } from './common/time'
 
 const excludedTitles = new Set(['묶음 규칙', '표시 근거'])
+const evidenceLabels: Record<Evidence['type'], string> = {
+  raw: '원시 JSONL',
+  derived: '트레이스에서 생성한 상태',
+  reference: '기록된 참조 위치',
+}
 
 const roleLabels: Record<ModelInputItem['role'], string> = {
   instruction: '지침',
@@ -51,6 +56,8 @@ export function Inspector({
   returnTo,
   inspectAction,
   onReturn,
+  onShowRaw,
+  onReturnFromRaw,
   onSelect,
   onInspectDelivery,
   onClose,
@@ -65,6 +72,8 @@ export function Inspector({
   returnTo?: { id: string; label: string } | null
   inspectAction?(token: string, actionId: string): Promise<ActionDetail | null>
   onReturn?(): void
+  onShowRaw?(): void
+  onReturnFromRaw?(): void
   onSelect(id: string, options?: { keepReading?: boolean }): void
   onInspectDelivery(fromAction: Action, delivery: DeliveryLink): void
   onClose(): void
@@ -109,7 +118,7 @@ export function Inspector({
       ? (detail?.modelRequest?.model || action.summary || action.label)
       : (raw ? action.label : action.reading?.title ?? action.label)
 
-  const visibleSections = (detail?.sections ?? []).filter((section) => !excludedTitles.has(section.title))
+  const visibleSections = (detail?.sections ?? []).filter((section) => raw || !excludedTitles.has(section.title))
   const messageSections = visibleSections.filter((section) => section.kind === 'message')
   const inputSections = visibleSections.filter((section) => section.kind === 'input')
   const resultSections = visibleSections.filter((section) => section.kind === 'result')
@@ -131,6 +140,8 @@ export function Inspector({
 
   const showActor = action.actor !== '채팅' && action.actor !== '루트 에이전트' && action.actor !== '사용자'
   const statusText = !raw && action.reading?.outcome ? action.reading.outcome : action.status
+  const evidence = detail?.evidence ?? []
+  const firstRaw = evidence.find((item) => item.type === 'raw' && item.text)
 
   return (
     <aside className="inspector" aria-label="실행 상세" key={id}>
@@ -141,6 +152,8 @@ export function Inspector({
               ← {returnTo.label}로 돌아가기
             </button>
           )}
+          {onReturnFromRaw && <button type="button" className="quiet inspector-return" onClick={onReturnFromRaw}>← 이전 보기로 돌아가기</button>}
+          {onShowRaw && <button type="button" className="quiet inspector-return" onClick={onShowRaw}>원본 근거 보기 →</button>}
           {eyebrow && <span className="inspector-eyebrow">{eyebrow}</span>}
           <h2>{heading}</h2>
           {raw && <ActionMeta action={action} />}
@@ -170,6 +183,20 @@ export function Inspector({
 
         {!current && <p className="inspector-state" role="status">상세 내용을 읽는 중입니다.</p>}
         {current && !detail && <p className="inspector-state">이 스냅샷에서 상세 내용을 읽을 수 없습니다.</p>}
+
+        {raw && current && (
+          <section className="iwo-panel-section raw-evidence" aria-label="원본 근거">
+            <h3>원본 근거</h3>
+            {!firstRaw && <p className="inspector-muted">이 스냅샷에서 원시 JSONL 본문 미확인</p>}
+            {evidence.map((item, index) => (
+              <details className="iwo-code-box" open={item === firstRaw} key={`${item.location}:${index}`}>
+                <summary>{evidenceLabels[item.type]} · {item.location}</summary>
+                {item.text ? <div className="iwo-code-entry"><pre>{item.text}</pre></div>
+                  : <p className="inspector-muted">본문 미확인</p>}
+              </details>
+            ))}
+          </section>
+        )}
 
         {detail?.modelRequest && (
           <div className="iwo-panel">

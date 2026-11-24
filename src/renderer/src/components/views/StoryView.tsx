@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Action, DeliveryLink, Turn } from '../../../../shared/reader'
 import { buildTurnStory, type StoryChapter } from '../../model/story-chapters'
 import { highlightSegments, type TimelineSearchResult } from '../../model/timeline-search'
@@ -103,14 +103,8 @@ export function StoryView({
 }) {
   const [requestExpanded, setRequestExpanded] = useState(false)
   const [answerExpanded, setAnswerExpanded] = useState(false)
-  const [expandedStepRuns, setExpandedStepRuns] = useState<Set<string>>(() => new Set())
   const lastTargetRef = useRef('')
-
-  useEffect(() => {
-    setRequestExpanded(false)
-    setAnswerExpanded(false)
-    setExpandedStepRuns(new Set())
-  }, [turn.id])
+  const instructionsRef = useRef<HTMLDetailsElement>(null)
 
   const story = useMemo(() => buildTurnStory(turn, actionsById), [turn, actionsById])
 
@@ -121,6 +115,10 @@ export function StoryView({
 
     const targetIds = [activeMatchId, selected].filter((id): id is string => Boolean(id))
     if (targetIds.length === 0) return
+
+    if (story.instructions.some((action) => action.id === selected) && instructionsRef.current) {
+      instructionsRef.current.open = true
+    }
 
     if (activeMatchId && story.requests.some((action) => action.id === activeMatchId)) {
       setRequestExpanded(true)
@@ -146,36 +144,29 @@ export function StoryView({
         }
       }
     }
-    if (chaptersToOpen.length > 0) {
-      onToggleTurnGroups(chaptersToOpen, true)
-    }
-    if (runsToOpen.length > 0) {
-      setExpandedStepRuns((prev) => {
-        const next = new Set(prev)
-        for (const runKey of runsToOpen) next.add(runKey)
-        return next
-      })
-    }
-  }, [turn.id, activeMatchId, selected, story, onToggleTurnGroups])
+    const groupsToOpen = [...chaptersToOpen, ...runsToOpen].filter((id) => !expandedGroups.has(id))
+    if (groupsToOpen.length > 0) onToggleTurnGroups(groupsToOpen, true)
+  }, [turn.id, activeMatchId, selected, story, expandedGroups, onToggleTurnGroups])
 
   const filtering = matchesOnly && search.words.length > 0
+  const visibleAction = (action: Action) => action.id === selected || search.matchedActions.has(action.id)
+  const visibleStep = (chapter: StoryChapter, action: Action) => (
+    visibleAction(action) || (chapter.nestedByParent.get(action.id) ?? []).some(visibleAction)
+  )
 
   const chapterMatches = (chapter: StoryChapter) => {
-    if (chapter.headingAction && search.matchedActions.has(chapter.headingAction.id)) return true
-    return chapter.actions.some((action) => {
-      if (search.matchedActions.has(action.id)) return true
-      return (chapter.nestedByParent.get(action.id) ?? []).some((child) => search.matchedActions.has(child.id))
-    })
+    if (chapter.headingAction && visibleAction(chapter.headingAction)) return true
+    return chapter.actions.some((action) => visibleStep(chapter, action))
   }
 
   const visibleRequests = filtering
-    ? story.requests.filter((action) => search.matchedActions.has(action.id))
+    ? story.requests.filter(visibleAction)
     : story.requests
   const visibleChapters = filtering
     ? story.chapters.filter(chapterMatches)
     : story.chapters
   const visibleAnswers = filtering
-    ? story.answers.filter((action) => search.matchedActions.has(action.id))
+    ? story.answers.filter(visibleAction)
     : story.answers
 
   const renderStepRow = (action: Action) => {
@@ -252,7 +243,7 @@ export function StoryView({
         {visibleRequests.map((action, index) => {
           const fullText = action.reading?.text ?? action.summary
           const redundantSingle = !filtering && story.requests.length === 1 && fullText.trim() === turn.title.trim()
-          if (redundantSingle) return null
+          if (redundantSingle && selected !== action.id && activeMatchId !== action.id) return null
           const isLong = fullText.length > 320
           const shown = isLong && !requestExpanded ? fullText.slice(0, 280).trimEnd() + '…' : fullText
           const match = search.matchedActions.get(action.id)
@@ -278,7 +269,7 @@ export function StoryView({
           )
         })}
 
-        {!filtering && story.instructions.length > 0 && (() => {
+        {story.instructions.length > 0 && (!filtering || story.instructions.some(visibleAction)) && (() => {
           const guides = story.instructions.filter((inst) => inst.label !== '설정 기록')
           const settings = story.instructions.filter((inst) => inst.label === '설정 기록')
           const summaryParts: string[] = []
@@ -306,7 +297,7 @@ export function StoryView({
             </div>
           )
           return (
-            <details className="story-instructions">
+            <details className="story-instructions" ref={instructionsRef}>
               <summary>{summaryParts.join(' · ')}</summary>
               <div className="story-instruction-groups">
                 {guides.length > 0 && renderInstructionList(guides, settings.length > 0 ? '지침' : undefined)}
@@ -331,10 +322,7 @@ export function StoryView({
                 ])
                 const chapterMatchCount = chapterItems.filter((action) => search.matchedActions.has(action.id)).length
                 const visibleChapterActions = filtering
-                  ? chapter.actions.filter((action) => {
-                    if (search.matchedActions.has(action.id)) return true
-                    return (chapter.nestedByParent.get(action.id) ?? []).some((child) => search.matchedActions.has(child.id))
-                  })
+                  ? chapter.actions.filter((action) => visibleStep(chapter, action))
                   : chapter.actions
 
                 const stepItems: ChapterStepItem[] = filtering
@@ -411,7 +399,7 @@ export function StoryView({
                         <ul className="story-chapter-items">
                           {stepItems.map((item) => {
                             if (item.kind === 'run') {
-                              const runOpen = expandedStepRuns.has(item.key)
+                              const runOpen = expandedGroups.has(item.key)
                               const runMatchCount = item.actions.filter((child) => search.matchedActions.has(child.id)).length
                               const runSelected = item.actions.some((child) => child.id === selected)
                               return (
@@ -420,12 +408,7 @@ export function StoryView({
                                     type="button"
                                     className={['story-run-toggle', runSelected && 'is-selected'].filter(Boolean).join(' ')}
                                     aria-expanded={runOpen}
-                                    onClick={() => setExpandedStepRuns((prev) => {
-                                      const next = new Set(prev)
-                                      if (next.has(item.key)) next.delete(item.key)
-                                      else next.add(item.key)
-                                      return next
-                                    })}
+                                    onClick={() => onToggleGroup(item.key)}
                                   >
                                     <span className="story-step-main">
                                       <strong>{runOpen ? '▾' : '▸'} {item.title} ×{item.actions.length}</strong>
@@ -449,7 +432,7 @@ export function StoryView({
                             const { action } = item
                             const nested = chapter.nestedByParent.get(action.id) ?? []
                             const visibleNested = filtering
-                              ? nested.filter((child) => search.matchedActions.has(child.id))
+                              ? nested.filter(visibleAction)
                               : nested
                             return (
                               <li key={action.id} className="story-chapter-item">
